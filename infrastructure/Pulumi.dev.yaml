@@ -1,0 +1,6 @@
+config:
+  aws:region: eu-central-1
+  aws:profile: zephyr
+  zephyr-infra:databaseUrl:
+    secure: v1:j6q4iVFdPH/GYhrF:QWExDQTz3otAeL66/9aTzOOCuMU/oiNBaR006eyDbbFOO9io3s/YrqFEKkDxLfFT8HneCellFYBV++kB3JJnVLz55s+PD/J7iEViXcjScj/DmQ8jdY1NY6++gqv1IX3bSP2arSpYiqkrVz/F/qAElxhVWZFPgjJyCA==
+encryptionsalt: v1:kio8okFfGBw=:v1:Kxz0VeiXB51OCAlb:0+trIGJMHR+Vu1QVBSDq+FgyNZZ3Ug==

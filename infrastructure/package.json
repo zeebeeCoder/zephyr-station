@@ -1,0 +1,22 @@
+{
+  "name": "zephyr-infra",
+  "version": "0.2.0",
+  "type": "module",
+  "main": "index.mjs",
+  "scripts": {
+    "build": "esbuild src/handler.mjs --bundle --minify --platform=node --target=node20 --external:@aws-sdk/* --outfile=dist/handler.js",
+    "preview": "npm run build && pulumi preview",
+    "up": "npm run build && pulumi up",
+    "destroy": "pulumi destroy",
+    "logs": "pulumi logs -f"
+  },
+  "dependencies": {
+    "@pulumi/pulumi": "^3",
+    "@pulumi/aws": "^6",
+    "postgres": "^3.4.7",
+    "zod": "^3.23"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24"
+  }
+}
