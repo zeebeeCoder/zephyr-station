@@ -34,6 +34,13 @@ export const handleIngest = async (event) => {
   // Insert into database
   const sql = getDb();
   try {
+    // Auto-register device if not exists
+    await sql`
+      INSERT INTO devices (id, name)
+      VALUES (${device_id}, ${device_id})
+      ON CONFLICT (id) DO NOTHING
+    `;
+
     await sql`
       INSERT INTO readings (
         device_id, recorded_at,
