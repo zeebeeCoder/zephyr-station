@@ -37,7 +37,7 @@ export async function POST(req: Request) {
     const context = await getContext();
 
     const result = streamText({
-      model: openai('gpt-4o'),
+      model: openai('gpt-5.2'),
       system: getSystemPrompt(context),
       messages: convertToModelMessages(messages),
       tools: weatherTools,

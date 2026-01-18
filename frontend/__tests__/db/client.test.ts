@@ -1,6 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { Database } from 'duckdb-async';
-import { DuckDbClient } from '@/lib/db/client';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { DuckDbClient, DuckDbAnalyticsClient } from '@/lib/db/client';
 
 describe('DuckDbClient', () => {
   let client: DuckDbClient;
@@ -114,5 +113,99 @@ describe('DuckDbClient', () => {
       ['non-existent']
     );
     expect(result).toEqual([]);
+  });
+});
+
+describe('DuckDbAnalyticsClient', () => {
+  let client: DuckDbAnalyticsClient;
+
+  beforeEach(async () => {
+    // Reset environment for each test
+    delete process.env.DATABASE_URL;
+  });
+
+  afterAll(async () => {
+    if (client) {
+      await client.close();
+    }
+  });
+
+  it('should load postgres extension without error', async () => {
+    client = new DuckDbAnalyticsClient();
+    // The postgres extension is loaded on first query
+    const result = await client.query('SELECT 1 as num');
+    expect(result).toHaveLength(1);
+    expect(result[0].num).toBe(1);
+  });
+
+  it('should work without postgres when DATABASE_URL not set', async () => {
+    client = new DuckDbAnalyticsClient();
+
+    // Create local tables since we're not attached to postgres
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS devices (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS readings (
+        id INTEGER PRIMARY KEY,
+        device_id TEXT NOT NULL,
+        recorded_at TIMESTAMP NOT NULL,
+        temperature_c DECIMAL(4,1)
+      )
+    `);
+
+    // Insert test data
+    await client.query(`
+      INSERT INTO devices (id, name) VALUES ('test-device', 'Test Device')
+    `);
+
+    // Query should work against local tables (no transformation)
+    const devices = await client.query<{ id: string; name: string }>(
+      'SELECT id, name FROM devices'
+    );
+    expect(devices).toHaveLength(1);
+    expect(devices[0].id).toBe('test-device');
+  });
+
+  describe('query transformation', () => {
+    it('should transform FROM readings to pg.public.readings when postgres attached', () => {
+      // Access the private method for testing via prototype
+      const clientInstance = new DuckDbAnalyticsClient();
+      const routeToPostgres = (clientInstance as unknown as { routeToPostgres: (sql: string) => string }).routeToPostgres.bind(clientInstance);
+
+      const sql = 'SELECT * FROM readings WHERE recorded_at > ?';
+      const transformed = routeToPostgres(sql);
+      expect(transformed).toBe('SELECT * FROM pg.public.readings WHERE recorded_at > ?');
+    });
+
+    it('should transform FROM devices to pg.public.devices when postgres attached', () => {
+      const clientInstance = new DuckDbAnalyticsClient();
+      const routeToPostgres = (clientInstance as unknown as { routeToPostgres: (sql: string) => string }).routeToPostgres.bind(clientInstance);
+
+      const sql = 'SELECT id FROM devices WHERE is_active = true';
+      const transformed = routeToPostgres(sql);
+      expect(transformed).toBe('SELECT id FROM pg.public.devices WHERE is_active = true');
+    });
+
+    it('should transform JOIN clauses', () => {
+      const clientInstance = new DuckDbAnalyticsClient();
+      const routeToPostgres = (clientInstance as unknown as { routeToPostgres: (sql: string) => string }).routeToPostgres.bind(clientInstance);
+
+      const sql = 'SELECT * FROM readings JOIN devices ON readings.device_id = devices.id';
+      const transformed = routeToPostgres(sql);
+      expect(transformed).toBe('SELECT * FROM pg.public.readings JOIN pg.public.devices ON readings.device_id = devices.id');
+    });
+
+    it('should handle case-insensitive table names', () => {
+      const clientInstance = new DuckDbAnalyticsClient();
+      const routeToPostgres = (clientInstance as unknown as { routeToPostgres: (sql: string) => string }).routeToPostgres.bind(clientInstance);
+
+      const sql = 'SELECT * FROM READINGS WHERE id = 1';
+      const transformed = routeToPostgres(sql);
+      expect(transformed).toBe('SELECT * FROM pg.public.readings WHERE id = 1');
+    });
   });
 });

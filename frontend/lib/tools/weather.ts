@@ -42,7 +42,9 @@ const comparePeriodsSchema = z.object({
 });
 
 const executeSqlSchema = z.object({
-  query: z.string().describe('SQL SELECT query to execute'),
+  query: z.string().describe(
+    `SQL SELECT query (DuckDB syntax). Use exact column names: temperature_c, humidity_pct, pressure_hpa, gas_density, pm1, pm25, pm10, wind_speed_ms, battery_v, system_amps, rssi. Tables: readings, devices only.`
+  ),
 });
 
 // ============================================================================
@@ -109,7 +111,7 @@ export const comparePeriods = tool({
 // ============================================================================
 
 export const executeSql = tool({
-  description: 'Execute a custom SQL query against the weather database. Only SELECT queries are allowed. Use for complex queries not covered by other tools.',
+  description: 'Execute analytical SQL for correlations, percentiles, and aggregations. Supports DuckDB functions: CORR(), STDDEV(), PERCENTILE_CONT(), DATE_TRUNC(), window functions. Tables: readings, devices only. SELECT queries only.',
   inputSchema: executeSqlSchema,
   execute: async ({ query }): Promise<Record<string, unknown>[]> => {
     const repo = getRepository();

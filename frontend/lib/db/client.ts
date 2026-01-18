@@ -1,5 +1,4 @@
 import { Database } from 'duckdb-async';
-import postgres from 'postgres';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -13,7 +12,92 @@ export interface DbClient {
   close(): Promise<void>;
 }
 
-// DuckDB client for local development
+/**
+ * DuckDB Analytics Client with postgres_scanner support.
+ *
+ * Uses DuckDB as the unified query engine:
+ * - When DATABASE_URL is a postgres:// URL, attaches via postgres_scanner
+ * - Otherwise, queries local DuckDB tables
+ *
+ * Benefits:
+ * - Columnar OLAP engine optimized for aggregations
+ * - Predicate pushdown to Postgres reduces data transfer
+ * - Consistent query behavior between dev and prod
+ */
+export class DuckDbAnalyticsClient implements DbClient {
+  private db: Database | null = null;
+  private pgAttached: boolean = false;
+  private initPromise: Promise<void> | null = null;
+
+  private async getDb(): Promise<Database> {
+    if (!this.db) {
+      this.db = await Database.create(':memory:');
+      // Install postgres extension (downloads on first use, cached after)
+      await this.db.run('INSTALL postgres');
+      await this.db.run('LOAD postgres');
+    }
+    return this.db;
+  }
+
+  private async attachPostgres(): Promise<void> {
+    if (this.pgAttached) return;
+
+    // Use init promise to prevent concurrent attachment attempts
+    if (this.initPromise) {
+      await this.initPromise;
+      return;
+    }
+
+    this.initPromise = (async () => {
+      const dbUrl = process.env.DATABASE_URL;
+      if (dbUrl?.startsWith('postgres')) {
+        const db = await this.getDb();
+        await db.run(`ATTACH '${dbUrl}' AS pg (TYPE POSTGRES, READ_ONLY)`);
+        this.pgAttached = true;
+      }
+    })();
+
+    await this.initPromise;
+  }
+
+  /**
+   * Transform SQL to route to postgres_scanner attached tables.
+   * Simple regex replacement: readings -> pg.public.readings
+   */
+  private routeToPostgres(sql: string): string {
+    return sql
+      .replace(/\bFROM\s+readings\b/gi, 'FROM pg.public.readings')
+      .replace(/\bFROM\s+devices\b/gi, 'FROM pg.public.devices')
+      .replace(/\bJOIN\s+readings\b/gi, 'JOIN pg.public.readings')
+      .replace(/\bJOIN\s+devices\b/gi, 'JOIN pg.public.devices');
+  }
+
+  async query<T = Record<string, unknown>>(
+    sql: string,
+    params: unknown[] = []
+  ): Promise<T[]> {
+    const db = await this.getDb();
+    await this.attachPostgres();
+
+    const transformedSql = this.pgAttached ? this.routeToPostgres(sql) : sql;
+    const result = await db.all(transformedSql, ...params);
+    return result as T[];
+  }
+
+  async close(): Promise<void> {
+    if (this.db) {
+      await this.db.close();
+      this.db = null;
+      this.pgAttached = false;
+      this.initPromise = null;
+    }
+  }
+}
+
+/**
+ * DuckDB client for local file-based development and seeding.
+ * Use this for seed scripts or when you need persistent local storage.
+ */
 export class DuckDbClient implements DbClient {
   private db: Database | null = null;
   private dbPath: string;
@@ -62,51 +146,17 @@ export class DuckDbClient implements DbClient {
   }
 }
 
-// Postgres client for production
-class PostgresClient implements DbClient {
-  private sql: postgres.Sql;
-
-  constructor(connectionString: string) {
-    this.sql = postgres(connectionString, {
-      max: 10,
-      idle_timeout: 20,
-    });
-  }
-
-  async query<T = Record<string, unknown>>(
-    sql: string,
-    params: unknown[] = []
-  ): Promise<T[]> {
-    // Use parameterized queries for security
-    // postgres.js uses $1, $2, etc. for parameters
-    if (params.length === 0) {
-      const result = await this.sql.unsafe(sql);
-      return result as unknown as T[];
-    }
-
-    // Convert ? placeholders to $1, $2, etc. for postgres.js
-    let paramIndex = 0;
-    const pgSql = sql.replace(/\?/g, () => `$${++paramIndex}`);
-    // Cast params to satisfy postgres.js types - values are validated at runtime
-    const result = await this.sql.unsafe(pgSql, params as (string | number | boolean | null)[]);
-    return result as unknown as T[];
-  }
-
-  async close(): Promise<void> {
-    await this.sql.end();
-  }
-}
-
-// Factory function to create appropriate client
+// Factory function - chooses client based on DATABASE_URL
 export function createDbClient(): DbClient {
-  const isDev = process.env.NODE_ENV !== 'production';
   const dbUrl = process.env.DATABASE_URL || 'local.db';
 
-  if (isDev || !dbUrl.startsWith('postgres')) {
-    return new DuckDbClient(dbUrl);
+  // Use analytics client with postgres_scanner for Supabase
+  if (dbUrl.startsWith('postgres')) {
+    return new DuckDbAnalyticsClient();
   }
 
-  return new PostgresClient(dbUrl);
+  // Use file-based DuckDB for local development
+  return new DuckDbClient(dbUrl);
 }
 
 // Singleton instance for app usage
@@ -119,7 +169,7 @@ export function getDbClient(): DbClient {
   return dbClient;
 }
 
-// Initialize database schema (DuckDB only)
+// Initialize database schema (DuckDB file-based only)
 export async function initializeDatabase(): Promise<void> {
   const client = getDbClient();
   if (client instanceof DuckDbClient) {
