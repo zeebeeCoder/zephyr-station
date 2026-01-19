@@ -12,6 +12,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { parseSemanticWeather } from "@/lib/parse-semantic-weather";
 import type { FileUIPart, UIMessage } from "ai";
 import {
   ChevronLeftIcon,
@@ -304,19 +305,37 @@ export const MessageBranchPage = ({
   );
 };
 
-export type MessageResponseProps = ComponentProps<typeof Streamdown>;
+export type MessageResponseProps = ComponentProps<typeof Streamdown> & {
+  enableSemanticParsing?: boolean;
+};
 
 export const MessageResponse = memo(
-  ({ className, ...props }: MessageResponseProps) => (
-    <Streamdown
-      className={cn(
-        "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
-        className
-      )}
-      {...props}
-    />
-  ),
-  (prevProps, nextProps) => prevProps.children === nextProps.children
+  ({ className, children, enableSemanticParsing = false, ...props }: MessageResponseProps) => {
+    // Pre-process text content for semantic structure (only for assistant messages)
+    const processedContent =
+      enableSemanticParsing && typeof children === "string"
+        ? parseSemanticWeather(children)
+        : children;
+
+    return (
+      <Streamdown
+        className={cn(
+          "prose prose-sm prose-invert max-w-none",
+          "prose-p:leading-relaxed prose-p:my-3",
+          "prose-strong:text-foreground prose-strong:font-semibold",
+          "prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5",
+          "[&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+          className
+        )}
+        {...props}
+      >
+        {processedContent}
+      </Streamdown>
+    );
+  },
+  (prevProps, nextProps) =>
+    prevProps.children === nextProps.children &&
+    prevProps.enableSemanticParsing === nextProps.enableSemanticParsing
 );
 
 MessageResponse.displayName = "MessageResponse";
