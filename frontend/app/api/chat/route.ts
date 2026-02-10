@@ -9,9 +9,10 @@ export const maxDuration = 30;
 async function getContext() {
   const db = getDbClient();
 
-  // Get available devices
-  const devices = await db.query<{ id: string }>('SELECT id FROM devices WHERE is_active = true');
-  const deviceIds = devices.map(d => d.id);
+  // Get available devices with location info
+  const devices = await db.query<{ id: string; name: string | null; location: string | null }>(
+    'SELECT id, name, location FROM devices WHERE is_active = true'
+  );
 
   // Get data range
   const range = await db.query<{ min_time: string; max_time: string }>(`
@@ -24,7 +25,7 @@ async function getContext() {
 
   return {
     currentTime: new Date().toISOString(),
-    devices: deviceIds.length > 0 ? deviceIds : ['station-01'],
+    devices: devices.length > 0 ? devices : [{ id: 'station-01', name: null, location: null }],
     dataRange,
   };
 }

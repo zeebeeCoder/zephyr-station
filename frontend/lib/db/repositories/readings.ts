@@ -138,14 +138,36 @@ function hasDangerousKeywords(sql: string): { found: boolean; keyword?: string }
  * Also accepts CTE names defined in the query itself.
  */
 function validateTables(sql: string, cteNames: Set<string> = new Set()): { valid: boolean; table?: string } {
-  const normalizedSql = sql.toLowerCase();
+  // Remove string literals to avoid false matches on content like 'FROM table'
+  const withoutStrings = sql
+    .replace(/'(?:[^'\\]|\\.)*'/g, "''")
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""');
+
+  // Remove SQL functions that use FROM in non-table contexts:
+  // - EXTRACT(field FROM source)
+  // - SUBSTRING(string FROM start)
+  // - TRIM(chars FROM string)
+  // - OVERLAY(string PLACING replacement FROM start)
+  const withoutFunctionFrom = withoutStrings
+    .replace(/\bextract\s*\([^)]*\bfrom\b[^)]*\)/gi, 'FUNC_REMOVED')
+    .replace(/\bsubstring\s*\([^)]*\bfrom\b[^)]*\)/gi, 'FUNC_REMOVED')
+    .replace(/\btrim\s*\([^)]*\bfrom\b[^)]*\)/gi, 'FUNC_REMOVED')
+    .replace(/\boverlay\s*\([^)]*\bfrom\b[^)]*\)/gi, 'FUNC_REMOVED');
+
+  const normalizedSql = withoutFunctionFrom.toLowerCase();
 
   // Match table references after FROM or JOIN
-  const tablePattern = /(?:from|join)\s+([a-z_][a-z0-9_.]*)/gi;
+  const tablePattern = /\b(?:from|join)\s+([a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)*)/gi;
 
   let match;
   while ((match = tablePattern.exec(normalizedSql)) !== null) {
     const tableName = match[1].toLowerCase();
+
+    // Skip SQL keywords that might appear after FROM in subqueries
+    if (['select', 'lateral', 'unnest'].includes(tableName)) {
+      continue;
+    }
+
     // Allow base tables, postgres-prefixed tables, and CTE names
     if (!ALLOWED_TABLES.has(tableName) && !cteNames.has(tableName)) {
       return { valid: false, table: tableName };
