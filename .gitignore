@@ -50,3 +50,6 @@ npm-debug.log*
 # Test coverage
 coverage/
 .envrc
+
+# Local databases
+*.db
