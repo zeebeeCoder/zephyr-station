@@ -2,6 +2,7 @@ import { tool } from 'ai';
 import { z } from 'zod';
 import { getDbClient } from '@/lib/db/client';
 import { ReadingsRepository, type Reading, type PeriodStats } from '@/lib/db/repositories/readings';
+import { getForecast } from './forecast';
 
 // ============================================================================
 // Helpers
@@ -129,4 +130,5 @@ export const weatherTools = {
   query_range: queryTimeRange,
   compare_periods: comparePeriods,
   execute_sql: executeSql,
+  get_forecast: getForecast,
 };

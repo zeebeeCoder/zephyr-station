@@ -5,6 +5,7 @@ import type { UIMessage, ToolUIPart } from 'ai';
 import { DefaultChatTransport } from 'ai';
 import { CopyIcon, CheckIcon, RefreshCwIcon, SquareIcon } from 'lucide-react';
 import { useState, useCallback, type ReactNode } from 'react';
+import Link from 'next/link';
 
 // Removed Conversation wrapper - using full-page scroll instead
 import {
@@ -39,7 +40,7 @@ import { Button } from '@/components/ui/button';
 const SUGGESTIONS = [
   "What's the current temperature?",
   "How's the air quality?",
-  "Is it warmer than yesterday?",
+  "What's the forecast?",
   "Should I open the windows?",
 ];
 
@@ -49,6 +50,7 @@ const TOOL_CONFIG: Record<string, { icon: string; label: string }> = {
   query_range: { icon: '📊', label: 'Time Range Query' },
   compare_periods: { icon: '📈', label: 'Period Comparison' },
   execute_sql: { icon: '🔍', label: 'Database Query' },
+  get_forecast: { icon: '🔮', label: 'Weather Forecast' },
 };
 
 function formatWeatherOutput(toolName: string, output: unknown): ReactNode {
@@ -85,6 +87,23 @@ function formatWeatherOutput(toolName: string, output: unknown): ReactNode {
             <span>{reading.pressure_hpa} hPa</span>
           </div>
         )}
+      </div>
+    );
+  }
+
+  // For forecast, show day cards
+  if (toolName === 'get_forecast' && Array.isArray(output)) {
+    return (
+      <div className="grid grid-cols-3 gap-2 text-sm p-2">
+        {output.map((day: { dayName: string; date: string; conditionEmoji: string; condition: string; tempMax: number; tempMin: number; precipChance: number }) => (
+          <div key={day.date} className="rounded-md bg-muted/50 p-2 text-center space-y-1">
+            <div className="font-medium">{day.dayName}</div>
+            <div className="text-2xl">{day.conditionEmoji}</div>
+            <div className="text-xs text-muted-foreground">{day.condition}</div>
+            <div className="font-semibold">{day.tempMax}° / <span className="text-muted-foreground">{day.tempMin}°</span></div>
+            <div className="text-xs">Rain: {day.precipChance}%</div>
+          </div>
+        ))}
       </div>
     );
   }
@@ -203,52 +222,25 @@ export function Chat() {
   const isLoading = status === 'submitted' || status === 'streaming';
 
   return (
-    <div className="relative min-h-screen">
-      {/* Main scrollable area - full page */}
-      <main className="pb-40 max-w-3xl mx-auto px-4">
-        {messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center min-h-[80vh] gap-4 py-8">
-            <span className="text-5xl">🌤️</span>
-            <div className="text-center space-y-2">
-              <h1 className="text-2xl font-medium tracking-tight">Zephyr</h1>
-              <p className="text-muted-foreground">
-                Ask about your local weather conditions
-              </p>
-            </div>
-            <div className="flex flex-col items-center gap-4 pt-6">
-              <Suggestions>
-                {SUGGESTIONS.map((suggestion) => (
-                  <Suggestion
-                    key={suggestion}
-                    suggestion={suggestion}
-                    onClick={handleSuggestion}
-                  />
-                ))}
-              </Suggestions>
-            </div>
-          </div>
-        ) : (
-          <div className="pt-8 space-y-6">
-            {messages.map((message) => (
-              <Message key={message.id} from={message.role}>
-                <MessageContent>
-                  {message.parts.map((part, idx) => (
-                    <MessagePart key={idx} part={part} index={idx} role={message.role} />
-                  ))}
-                </MessageContent>
-                {message.role === 'assistant' && (
-                  <MessageActions>
-                    <CopyButton content={getMessageText(message)} />
-                    <MessageAction tooltip="Regenerate" onClick={() => regenerate()}>
-                      <RefreshCwIcon className="size-4" />
-                    </MessageAction>
-                  </MessageActions>
-                )}
-              </Message>
-            ))}
-          </div>
-        )}
-      </main>
+    <div className="flex flex-col h-screen max-w-3xl mx-auto">
+      {/* Header */}
+      <header className="shrink-0 border-b px-4 py-3 flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-semibold flex items-center gap-2">
+            <span>🌤️</span>
+            <span>Zephyr Weather Station</span>
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            Ask about your local weather conditions
+          </p>
+        </div>
+        <Link
+          href="/forecast"
+          className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-md border border-border hover:bg-muted"
+        >
+          🔮 Forecast
+        </Link>
+      </header>
 
       {/* Sticky input area at bottom */}
       <div className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-background via-background to-transparent pt-6 pb-4">

@@ -52,73 +52,8 @@ export function getSystemPrompt(context: {
 1. **get_current** - Get the latest readings
 2. **query_range** - Query readings within a time range
 3. **compare_periods** - Compare two time periods (e.g., today vs yesterday)
-4. **execute_sql** - Run analytical SQL queries (SELECT only, DuckDB syntax)
-
-## DuckDB Analytical Functions
-Use these in execute_sql for advanced analysis:
-- \`CORR(x, y)\` - Correlation coefficient between two columns
-- \`STDDEV(x)\` - Standard deviation
-- \`PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY x)\` - Percentiles
-- \`DATE_TRUNC('hour', timestamp)\` - Time bucketing
-- \`NOW() - INTERVAL '24 hours'\` - Time range expressions
-- \`LEAD(col, n) OVER (ORDER BY ...)\` - Window functions for lag analysis
-- \`WITH cte AS (...) SELECT ...\` - CTEs supported for complex queries
-
-## Example SQL Queries
-\`\`\`sql
--- Correlation: PM2.5 vs wind speed
-SELECT CORR(pm25, wind_speed_ms) as correlation
-FROM readings
-WHERE recorded_at >= NOW() - INTERVAL '24 hours'
-
--- Hourly temperature averages
-SELECT
-  DATE_TRUNC('hour', recorded_at) as hour,
-  AVG(temperature_c) as avg_temp,
-  AVG(pm25) as avg_pm25
-FROM readings
-WHERE recorded_at >= NOW() - INTERVAL '24 hours'
-GROUP BY 1
-ORDER BY 1
-
--- PM2.5 percentiles for the week
-SELECT
-  PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY pm25) as median,
-  PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY pm25) as p95
-FROM readings
-WHERE recorded_at >= NOW() - INTERVAL '7 days'
-\`\`\`
-
-## Output Formatting
-
-The UI renders markdown with special styling for weather data. Use these patterns:
-
-### Structured Data Rows
-For metrics, use this format - the UI will align and style them:
-\`\`\`
-Label: value → interpretation
-\`\`\`
-Example:
-\`\`\`
-PM2.5: 46 µg/m³ → Unhealthy for sensitive groups
-Temperature: 18.5°C → Comfortable
-\`\`\`
-
-### ASCII Visualizations
-ASCII charts and sparklines render well in monospace but **cannot be color-coded**.
-Use block characters for bar charts: ▁▂▃▄▅▆▇█ (these scale 1-8).
-Keep ASCII charts simple and single-color.
-
-### Conditionals
-Start advice with "If you..." - the UI will style it as a callout:
-\`\`\`
-If you need fresh air, do a brief 2-5 minute airing.
-\`\`\`
-
-### What NOT to do
-- Don't use markdown tables (they don't render well in chat)
-- Don't use color emoji as data indicators (inconsistent)
-- Don't use strikethrough ~~text~~ (renders as faded text)
+4. **execute_sql** - Run custom SQL queries (SELECT only)
+5. **get_forecast** - Get weather forecast for Jelenia Gora (1-7 days)
 
 ## Response Guidelines
 
@@ -128,6 +63,7 @@ If you need fresh air, do a brief 2-5 minute airing.
 - **Comparisons**: "Is it warmer than yesterday?", "Compare to last week"
 - **Correlations**: "How does wind affect PM2.5?", "Temperature vs humidity?"
 - **Anomalies**: "When did PM2.5 spike?", "Any unusual readings?"
+- **Forecast**: "What's the forecast?", "Will it rain tomorrow?", "Weekend weather?"
 
 ### 2. Choose the Right Tool
 - Simple current data → get_current
