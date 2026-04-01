@@ -242,6 +242,41 @@ export function Chat() {
         </Link>
       </header>
 
+      {/* Messages area */}
+      <main className="flex-1 overflow-y-auto pb-40 px-4">
+        {messages.length === 0 ? (
+          <div className="flex items-center justify-center h-full">
+            <Suggestions>
+              {SUGGESTIONS.map((s) => (
+                <Suggestion key={s} suggestion={s} onClick={handleSuggestion} />
+              ))}
+            </Suggestions>
+          </div>
+        ) : (
+          <div className="space-y-4 py-4">
+            {messages.map((message) => (
+              <Message key={message.id} from={message.role}>
+                <MessageContent>
+                  {message.parts.map((part, i) => (
+                    <MessagePart key={i} part={part} index={i} role={message.role} />
+                  ))}
+                </MessageContent>
+                {message.role === 'assistant' && (
+                  <MessageActions>
+                    <CopyButton content={getMessageText(message)} />
+                    {message.id === messages[messages.length - 1]?.id && !isLoading && (
+                      <MessageAction tooltip="Regenerate" onClick={() => regenerate()}>
+                        <RefreshCwIcon className="size-4" />
+                      </MessageAction>
+                    )}
+                  </MessageActions>
+                )}
+              </Message>
+            ))}
+          </div>
+        )}
+      </main>
+
       {/* Sticky input area at bottom */}
       <div className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-background via-background to-transparent pt-6 pb-4">
         <div className="max-w-3xl mx-auto px-4">
@@ -269,12 +304,6 @@ export function Chat() {
             </PromptInputFooter>
           </PromptInput>
         </div>
-      </div>
-
-      {/* Subtle branding - top left */}
-      <div className="fixed top-4 left-4 text-xs text-muted-foreground/50 flex items-center gap-1.5">
-        <span>🌤️</span>
-        <span>Zephyr</span>
       </div>
     </div>
   );
