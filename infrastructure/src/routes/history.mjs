@@ -7,8 +7,14 @@ const logger = new Logger('history');
 
 const METRICS = {
   temperature_c: { column: 'temperature_c', unit: '°C' },
+  humidity_pct:  { column: 'humidity_pct',  unit: '%' },
+  pressure_hpa:  { column: 'pressure_hpa',  unit: 'hPa' },
   pm25:          { column: 'pm25',          unit: 'µg/m³' },
+  pm10:          { column: 'pm10',          unit: 'µg/m³' },
+  pm1:           { column: 'pm1',           unit: 'µg/m³' },
   wind_speed_ms: { column: 'wind_speed_ms', unit: 'm/s' },
+  gas_density:   { column: 'gas_density',   unit: 'kΩ' },
+  battery_v:     { column: 'battery_v',     unit: 'V' },
 };
 
 const RANGES = {
