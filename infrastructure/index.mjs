@@ -117,6 +117,33 @@ const ingestIntegration = new aws.apigateway.Integration('ingest-integration', {
 });
 
 // =============================================================================
+// /widget Resource (Latest Reading - No API Key)
+// =============================================================================
+
+const widgetResource = new aws.apigateway.Resource('widget-resource', {
+  restApi: api.id,
+  parentId: api.rootResourceId,
+  pathPart: 'widget',
+});
+
+const widgetMethod = new aws.apigateway.Method('widget-method', {
+  restApi: api.id,
+  resourceId: widgetResource.id,
+  httpMethod: 'GET',
+  authorization: 'NONE',
+  apiKeyRequired: false,
+});
+
+const widgetIntegration = new aws.apigateway.Integration('widget-integration', {
+  restApi: api.id,
+  resourceId: widgetResource.id,
+  httpMethod: widgetMethod.httpMethod,
+  integrationHttpMethod: 'POST',
+  type: 'AWS_PROXY',
+  uri: lambda.invokeArn,
+});
+
+// =============================================================================
 // /history Resource (Historical Data - No API Key)
 // =============================================================================
 
@@ -155,11 +182,13 @@ const deployment = new aws.apigateway.Deployment('zephyr-deployment', {
       helloIntegration.id,
       ingestMethod.id,
       ingestIntegration.id,
+      widgetMethod.id,
+      widgetIntegration.id,
       historyMethod.id,
       historyIntegration.id,
     ]).apply(ids => JSON.stringify(ids)),
   },
-}, { dependsOn: [helloIntegration, ingestIntegration, historyIntegration] });
+}, { dependsOn: [helloIntegration, ingestIntegration, widgetIntegration, historyIntegration] });
 
 const stage = new aws.apigateway.Stage('zephyr-stage', {
   restApi: api.id,
@@ -217,6 +246,7 @@ new aws.lambda.Permission('zephyr-api-permission', {
 
 export const helloUrl = pulumi.interpolate`https://${api.id}.execute-api.${region.name}.amazonaws.com/${stage.stageName}/hello`;
 export const ingestUrl = pulumi.interpolate`https://${api.id}.execute-api.${region.name}.amazonaws.com/${stage.stageName}/ingest`;
+export const widgetUrl = pulumi.interpolate`https://${api.id}.execute-api.${region.name}.amazonaws.com/${stage.stageName}/widget`;
 export const historyUrl = pulumi.interpolate`https://${api.id}.execute-api.${region.name}.amazonaws.com/${stage.stageName}/history`;
 export const apiKeyValue = apiKey.value;
 export const lambdaName = lambda.name;
