@@ -3,6 +3,7 @@
 import { error, httpStatus, Logger } from './lib/index.mjs';
 import { handleHello } from './routes/hello.mjs';
 import { handleIngest } from './routes/ingest.mjs';
+import { handleHistory } from './routes/history.mjs';
 
 const logger = new Logger('router');
 
@@ -10,6 +11,7 @@ const logger = new Logger('router');
 const routes = {
   'GET /hello': handleHello,
   'POST /ingest': handleIngest,
+  'GET /history': handleHistory,
 };
 
 export const handler = async (event) => {

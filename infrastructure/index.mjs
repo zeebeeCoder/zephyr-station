@@ -117,6 +117,33 @@ const ingestIntegration = new aws.apigateway.Integration('ingest-integration', {
 });
 
 // =============================================================================
+// /history Resource (Historical Data - No API Key)
+// =============================================================================
+
+const historyResource = new aws.apigateway.Resource('history-resource', {
+  restApi: api.id,
+  parentId: api.rootResourceId,
+  pathPart: 'history',
+});
+
+const historyMethod = new aws.apigateway.Method('history-method', {
+  restApi: api.id,
+  resourceId: historyResource.id,
+  httpMethod: 'GET',
+  authorization: 'NONE',
+  apiKeyRequired: false,
+});
+
+const historyIntegration = new aws.apigateway.Integration('history-integration', {
+  restApi: api.id,
+  resourceId: historyResource.id,
+  httpMethod: historyMethod.httpMethod,
+  integrationHttpMethod: 'POST',
+  type: 'AWS_PROXY',
+  uri: lambda.invokeArn,
+});
+
+// =============================================================================
 // Deployment & Stage
 // =============================================================================
 
@@ -128,9 +155,11 @@ const deployment = new aws.apigateway.Deployment('zephyr-deployment', {
       helloIntegration.id,
       ingestMethod.id,
       ingestIntegration.id,
+      historyMethod.id,
+      historyIntegration.id,
     ]).apply(ids => JSON.stringify(ids)),
   },
-}, { dependsOn: [helloIntegration, ingestIntegration] });
+}, { dependsOn: [helloIntegration, ingestIntegration, historyIntegration] });
 
 const stage = new aws.apigateway.Stage('zephyr-stage', {
   restApi: api.id,
@@ -188,5 +217,6 @@ new aws.lambda.Permission('zephyr-api-permission', {
 
 export const helloUrl = pulumi.interpolate`https://${api.id}.execute-api.${region.name}.amazonaws.com/${stage.stageName}/hello`;
 export const ingestUrl = pulumi.interpolate`https://${api.id}.execute-api.${region.name}.amazonaws.com/${stage.stageName}/ingest`;
+export const historyUrl = pulumi.interpolate`https://${api.id}.execute-api.${region.name}.amazonaws.com/${stage.stageName}/history`;
 export const apiKeyValue = apiKey.value;
 export const lambdaName = lambda.name;
