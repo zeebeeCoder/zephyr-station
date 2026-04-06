@@ -34,24 +34,25 @@ export const handleWidget = async (event) => {
     }
 
     const r = rows[0];
+    const num = (v) => v != null ? Number(v) : null;
     const dataAgeSeconds = Math.round((Date.now() - new Date(r.recorded_at).getTime()) / 1000);
 
     return success({
       device_id: r.device_id,
       recorded_at: r.recorded_at,
       readings: {
-        temperature_c: r.temperature_c,
-        humidity_pct: r.humidity_pct,
-        pressure_hpa: r.pressure_hpa,
-        gas_density: r.gas_density,
+        temperature_c: num(r.temperature_c),
+        humidity_pct: num(r.humidity_pct),
+        pressure_hpa: num(r.pressure_hpa),
+        gas_density: num(r.gas_density),
         pm1: r.pm1,
         pm25: r.pm25,
         pm10: r.pm10,
-        wind_speed_ms: r.wind_speed_ms,
+        wind_speed_ms: num(r.wind_speed_ms),
       },
       meta: {
-        battery_v: r.battery_v,
-        system_amps: r.system_amps,
+        battery_v: num(r.battery_v),
+        system_amps: num(r.system_amps),
         rssi: r.rssi,
       },
       station_status: dataAgeSeconds < 600 ? 'online' : 'offline',
