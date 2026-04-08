@@ -1,0 +1,66 @@
+name: ZephyrStation
+options:
+  bundleIdPrefix: com.zephyr
+  deploymentTarget:
+    iOS: "17.0"
+    macOS: "14.0"
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: K2HQH74UUP
+
+targets:
+  ZephyrStation:
+    type: application
+    supportedDestinations: [iOS, macOS]
+    sources:
+      - ZephyrStation
+    info:
+      path: ZephyrStation/Info.plist
+      properties:
+        NSSupportsLiveActivities: true
+        UILaunchScreen: {}
+        CFBundleDisplayName: Atlas
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.zephyr.station
+        INFOPLIST_FILE: ZephyrStation/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ZephyrStation/ZephyrStation.entitlements
+    dependencies:
+      - target: ZephyrWidgetExtension
+
+  ZephyrWidgetExtension:
+    type: app-extension
+    supportedDestinations: [iOS, macOS]
+    sources:
+      - ZephyrWidget
+      - path: ZephyrStation/ZephyrWidgetAttributes.swift
+      - path: ZephyrStation/WeatherService.swift
+      - path: ZephyrStation/WeatherData.swift
+      - path: ZephyrStation/HistoryData.swift
+    info:
+      path: ZephyrWidget/Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.zephyr.station.widget
+        INFOPLIST_FILE: ZephyrWidget/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ZephyrWidget/ZephyrWidget.entitlements
+
+schemes:
+  ZephyrStation:
+    build:
+      targets:
+        ZephyrStation: all
+        ZephyrWidgetExtension: all
+    run:
+      config: Debug
+    profile:
+      config: Release
+    archive:
+      config: Release

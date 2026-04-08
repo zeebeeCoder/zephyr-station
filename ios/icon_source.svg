@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Pure black background -->
+  <rect width="1024" height="1024" rx="224" fill="#000000"/>
+
+  <!-- ASCII art ZEPHYR — blocky geometric style, white on black, centered -->
+  <text font-family="'Menlo', 'Courier New', monospace" font-size="38" fill="white" xml:space="preserve" letter-spacing="0">
+<tspan x="90" y="340"> _____          _               </tspan>
+<tspan x="90" y="380">|__  / ___ _ __| |__  _   _ _ __</tspan>
+<tspan x="90" y="420">  / / / _ \ '_ \ '_ \| | | | '__|</tspan>
+<tspan x="90" y="460"> / /_|  __/ |_) | | | | |_| | |</tspan>
+<tspan x="90" y="500">/____|\___| .__/|_| |_|\__, |_|</tspan>
+<tspan x="90" y="540">          |_|          |___/</tspan>
+  </text>
+
+  <!-- Blinking cursor -->
+  <rect x="610" y="530" width="20" height="4" fill="rgba(255,255,255,0.6)" rx="1"/>
+
+  <!-- Subtle scan lines for CRT effect -->
+  <g stroke="rgba(255,255,255,0.015)" stroke-width="1">
+    <line x1="0" y1="300" x2="1024" y2="300"/>
+    <line x1="0" y1="340" x2="1024" y2="340"/>
+    <line x1="0" y1="380" x2="1024" y2="380"/>
+    <line x1="0" y1="420" x2="1024" y2="420"/>
+    <line x1="0" y1="460" x2="1024" y2="460"/>
+    <line x1="0" y1="500" x2="1024" y2="500"/>
+    <line x1="0" y1="540" x2="1024" y2="540"/>
+  </g>
+</svg>
