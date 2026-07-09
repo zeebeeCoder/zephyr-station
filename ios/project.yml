@@ -23,7 +23,8 @@ targets:
       properties:
         NSSupportsLiveActivities: true
         UILaunchScreen: {}
-        CFBundleDisplayName: Atlas
+        CFBundleDisplayName: Zephyr
+        ITSAppUsesNonExemptEncryption: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.zephyr.station

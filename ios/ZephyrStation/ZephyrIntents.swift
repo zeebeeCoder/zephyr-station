@@ -77,7 +77,7 @@ struct ZephyrShortcuts: AppShortcutsProvider {
                 "\(.applicationName) reading",
                 "What's \(.applicationName) saying",
             ],
-            shortTitle: "Atlas Reading",
+            shortTitle: "Zephyr Reading",
             systemImageName: "thermometer.medium"
         )
     }
