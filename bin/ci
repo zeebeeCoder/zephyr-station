@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== Zephyr Backend CI ==="
+
+cd backend
+
+echo "→ Installing dependencies (npm ci)..."
+npm ci
+
+echo "→ Type checking..."
+npm run typecheck
+
+echo "→ Running unit tests..."
+export DATABASE_URL="postgres://dummy"
+export INGEST_API_KEY="test-key"
+npm run test:unit
+
+echo "→ Running persistence smoke check..."
+../bin/test-persistence
+
+echo "→ Running integration tests..."
+../bin/test-integration
+
+echo "→ Building Docker image..."
+docker buildx build --platform linux/amd64 --load -t zephyr-backend:ci .
+
+echo "=== CI passed ==="

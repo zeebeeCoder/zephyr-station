@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+COMPOSE_FILE="$REPO_ROOT/backend/docker-compose.yml"
+MAX_WAIT=30
+
+cleanup() {
+  echo "→ Tearing down test environment..."
+  docker compose -f "$COMPOSE_FILE" down -v || true
+}
+trap cleanup EXIT
+
+echo "→ Starting PostgreSQL for integration tests..."
+docker compose -f "$COMPOSE_FILE" up -d postgres
+
+echo "→ Waiting for PostgreSQL..."
+n=0
+until docker compose -f "$COMPOSE_FILE" exec -T postgres pg_isready -U zephyr -d zephyr >/dev/null 2>&1; do
+  n=$((n + 1))
+  if [ "$n" -ge "$MAX_WAIT" ]; then
+    echo "→ ERROR: PostgreSQL did not become ready within ${MAX_WAIT}s"
+    exit 1
+  fi
+  sleep 1
+done
+
+echo "→ Running migrations..."
+(
+  cd "$REPO_ROOT/backend"
+  DATABASE_URL="postgres://zephyr:zephyr@localhost:5433/zephyr" \
+    npx tsx src/db/migrate.ts
+)
+
+echo "→ Running integration tests..."
+(
+  cd "$REPO_ROOT/backend"
+  DATABASE_URL="postgres://zephyr:zephyr@localhost:5433/zephyr" \
+  INGEST_API_KEY="test-key" \
+    npx vitest run test/integration
+)
+
+echo "→ Integration tests passed."

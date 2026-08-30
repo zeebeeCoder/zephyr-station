@@ -1,0 +1,45 @@
+# Kamal deployment configuration for Zephyr backend
+# See: https://kamal-deploy.org/docs/configuration/
+
+service: zephyr
+
+image: zeebeecoder/zephyr-backend
+
+servers:
+  web:
+    - <%= ENV.fetch("KAMAL_HOST", "placeholder.local") %>
+
+registry:
+  server: ghcr.io
+  username: <%= ENV.fetch("GITHUB_USERNAME", "zeebeeCoder") %>
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+env:
+  secret:
+    - DATABASE_URL
+    - INGEST_API_KEY
+
+ssh:
+  user: <%= ENV.fetch("KAMAL_SSH_USER", "sagent") %>
+
+builder:
+  arch: amd64
+
+proxy:
+  app_port: 3000
+  healthcheck:
+    path: /up
+
+accessories:
+  postgres:
+    image: postgres:17-alpine
+    host: <%= ENV.fetch("KAMAL_HOST", "placeholder.local") %>
+    env:
+      clear:
+        POSTGRES_USER: zephyr
+        POSTGRES_DB: zephyr
+      secret:
+        - POSTGRES_PASSWORD
+    volumes:
+      - /var/lib/zephyr/postgres:/var/lib/postgresql/data

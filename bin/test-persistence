@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+COMPOSE_FILE="$REPO_ROOT/backend/docker-compose.yml"
+MAX_WAIT=30
+
+cleanup() {
+  echo "→ Tearing down persistence test environment..."
+  docker compose -f "$COMPOSE_FILE" down -v || true
+}
+trap cleanup EXIT
+
+wait_for_api() {
+  local label="${1:-API}"
+  local n=0
+  echo "→ Waiting for ${label}..."
+  while ! curl -fsS http://localhost:3000/up > /dev/null 2>&1; do
+    n=$((n + 1))
+    if [ "$n" -ge "$MAX_WAIT" ]; then
+      echo "→ ERROR: ${label} did not become ready within ${MAX_WAIT}s"
+      exit 1
+    fi
+    sleep 1
+  done
+  echo "→ ${label} ready"
+}
+
+echo "→ Starting services for persistence test..."
+docker compose -f "$COMPOSE_FILE" up -d
+
+wait_for_api "API"
+
+echo "→ Running migrations..."
+(
+  cd "$REPO_ROOT/backend"
+  DATABASE_URL="postgres://zephyr:zephyr@localhost:5433/zephyr" \
+    npx tsx src/db/migrate.ts
+)
+
+echo "→ Ingesting a reading..."
+curl -fsS -X POST http://localhost:3000/v1/ingest \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: test-key" \
+  -d '{"device_id":"persist-test","timestamp":"2026-08-30T12:00:00Z","readings":{"temperature_c":20,"humidity_pct":50,"pressure_hpa":1013,"pm25":5,"pm10":10},"meta":{"battery_v":3.9,"rssi":-70}}'
+
+echo ""
+echo "→ Recreating API and Postgres containers (without -v)..."
+docker compose -f "$COMPOSE_FILE" stop api postgres
+docker compose -f "$COMPOSE_FILE" rm -f api postgres
+docker compose -f "$COMPOSE_FILE" up -d api postgres
+
+wait_for_api "API after recreation"
+
+echo "→ Verifying reading survived recreation..."
+widget_response=$(curl -fsS "http://localhost:3000/v1/widget?device_id=persist-test")
+echo "Widget response: $widget_response"
+
+if echo "$widget_response" | grep -q '"device_id":"persist-test"'; then
+  echo "→ Persistence test passed: reading survived container recreation"
+else
+  echo "→ Persistence test failed: reading not found after recreation"
+  exit 1
+fi
