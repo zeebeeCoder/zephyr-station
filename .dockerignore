@@ -1,0 +1,10 @@
+backend/node_modules
+backend/dist
+backend/.env
+backend/.env.local
+backend/.env.*
+backend/*.log
+backend/.DS_Store
+backend/docker-compose.yml
+backend/test
+backend/vitest.config.ts
