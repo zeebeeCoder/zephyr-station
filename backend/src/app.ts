@@ -5,6 +5,7 @@ import { healthRoutes } from './routes/health.js';
 import { helloRoutes } from './routes/hello.js';
 import { ingestRoutes } from './routes/ingest.js';
 import { widgetRoutes } from './routes/widget.js';
+import { historyRoutes } from './routes/history.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -42,6 +43,7 @@ export function buildApp(options: {
   app.register(helloRoutes, { prefix: '/v1' });
   app.register(ingestRoutes, { prefix: '/v1' });
   app.register(widgetRoutes, { prefix: '/v1' });
+  app.register(historyRoutes, { prefix: '/v1' });
 
   return app;
 }
