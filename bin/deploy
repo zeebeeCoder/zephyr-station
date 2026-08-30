@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+cd "$REPO_ROOT"
+
+ACTION="${1:-deploy}"
+if [ "$ACTION" != "deploy" ] && [ "$ACTION" != "setup" ]; then
+  echo "ERROR: Invalid action '$ACTION'. Must be 'deploy' or 'setup'."
+  exit 1
+fi
+
+# 1. Fail on dirty tree
+if [ -n "$(git status --porcelain)" ]; then
+  echo "ERROR: Dirty tree. Commit or stash before deploying."
+  exit 1
+fi
+
+# 2. Require KAMAL_HOST
+if [ -z "${KAMAL_HOST:-}" ]; then
+  echo "ERROR: KAMAL_HOST must be set (e.g., export KAMAL_HOST=192.168.1.50)"
+  exit 1
+fi
+
+# 3. Check bundle is available
+if ! command -v bundle >/dev/null 2>&1; then
+  echo "ERROR: 'bundle' not found. Install Ruby/bundler and ensure it's on PATH."
+  echo "  gem install bundler"
+  echo "  Or check: export PATH=\"\$(ruby -e 'print Gem.user_dir')/bin:\$PATH\""
+  exit 1
+fi
+
+# 4. Check required secrets without printing values
+# Source .kamal/secrets with nounset disabled (the template may reference unset vars)
+set +u
+if [ -f .kamal/secrets ]; then
+  if ! source .kamal/secrets; then
+    set -u
+    echo "ERROR: Failed to source .kamal/secrets"
+    exit 1
+  fi
+fi
+set -u
+
+REQUIRED_SECRETS=("KAMAL_REGISTRY_PASSWORD" "DATABASE_URL" "INGEST_API_KEY" "POSTGRES_PASSWORD")
+MISSING=()
+
+for secret in "${REQUIRED_SECRETS[@]}"; do
+  if [ -z "${!secret:-}" ]; then
+    MISSING+=("$secret")
+  fi
+done
+
+if [ ${#MISSING[@]} -ne 0 ]; then
+  echo "ERROR: Required secrets not set: ${MISSING[*]}"
+  echo "  Copy .kamal/secrets.example to .kamal/secrets, then either:"
+  echo "    - Export the variables in your shell (forwarding lines in .kamal/secrets resolve them), or"
+  echo "    - Replace forwarding lines with actual values in .kamal/secrets and chmod 600."
+  echo "  Never commit secrets."
+  exit 1
+fi
+
+# 5. Run CI
+echo "→ Running CI..."
+bin/ci
+
+# 6. Check bundle
+echo "→ Checking bundle..."
+bundle check
+
+# 7. Deploy or setup
+if [ "$ACTION" == "setup" ]; then
+  echo "→ Setting up on $KAMAL_HOST..."
+  bundle exec kamal setup
+else
+  echo "→ Deploying to $KAMAL_HOST..."
+  bundle exec kamal deploy
+fi
