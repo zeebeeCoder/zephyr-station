@@ -55,6 +55,14 @@ This model depends on port 3000 remaining unpublished and the application being 
 
 One high-entropy shared ingest key is acceptable only for the initial small fleet. Before gateways grow materially, provision per-device/gateway credentials bound to allowed `device_id` values and support individual revocation. Do not weaken the global key or encode it in logs, URLs, or source control.
 
+## Database Startup Retry
+
+Startup migrations make at most **four attempts**, with exponential delays of **250 ms, 500 ms, and 1000 ms** and a **12-second elapsed guard**. Each startup migration connection has a two-second connection timeout, so a continuously unavailable local database normally fails in under ten seconds rather than relying on an unbounded container restart loop.
+
+Only explicit transient connection codes are retried: refused/reset/aborted connections, broken pipes, temporary DNS failure (`EAI_AGAIN`), network/host unreachable or down, postgres.js connection timeout/closed/destroyed errors, and PostgreSQL `08001`, `08006`, or `57P03`. Nested `cause` values are inspected, and an `AggregateError` is retryable only when every contained error is transient. Permanent DNS failure (`ENOTFOUND`), invalid URLs/configuration, authentication failures, and SQL/migration/schema errors fail immediately.
+
+Retry logs contain only attempt count, delay, and error code—never the database URL, message, or credentials. A shutdown signal aborts an in-progress backoff instead of scheduling another attempt.
+
 ## First Deploy
 
 First deployment to a fresh host sets up the proxy and accessories:

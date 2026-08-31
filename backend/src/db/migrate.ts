@@ -7,7 +7,7 @@ const MIGRATIONS_DIR = new URL('./migrations', import.meta.url).pathname;
 export async function runMigrations(databaseUrl: string) {
   const sql = postgres(databaseUrl, {
     max: 1,
-    connect_timeout: 10,
+    connect_timeout: 2,
   });
 
   try {
@@ -41,9 +41,6 @@ export async function runMigrations(databaseUrl: string) {
     }
 
     console.log('Migrations complete.');
-  } catch (err) {
-    console.error('Migration failed:', err);
-    throw err;
   } finally {
     await sql.end();
   }
@@ -84,5 +81,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.error('DATABASE_URL not set');
     process.exit(1);
   }
-  runMigrations(url).catch(() => process.exit(1));
+  runMigrations(url).catch(() => {
+    console.error('Migration failed');
+    process.exit(1);
+  });
 }
