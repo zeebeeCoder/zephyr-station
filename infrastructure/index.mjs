@@ -3,14 +3,9 @@
 import * as pulumi from '@pulumi/pulumi';
 import * as aws from '@pulumi/aws';
 
-import { configureZephyrApiDns } from './cloudflare-dns.mjs';
-
 // Configuration
 const config = new pulumi.Config();
 const databaseUrl = config.requireSecret('databaseUrl');
-
-// The existing Cloudflare zone remains external. This manages one DNS-only API A record.
-configureZephyrApiDns({ config });
 
 // Get current region
 const region = aws.getRegionOutput();

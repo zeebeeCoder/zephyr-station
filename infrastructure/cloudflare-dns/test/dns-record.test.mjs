@@ -9,7 +9,7 @@ import {
   requireCloudflareApiToken,
   ZEPHYR_API_DNS_RESOURCE_NAME,
   ZEPHYR_API_DNS_TTL_SECONDS,
-} from '../cloudflare-dns.mjs';
+} from '../dns-record.mjs';
 
 const resources = [];
 
@@ -37,7 +37,7 @@ function stubConfig(values) {
 
 const validConfig = {
   cloudflareZoneId: '0123456789abcdef0123456789abcdef',
-  apiHostname: 'api.example.test',
+  apiHostname: 'zephyr.example.test',
   originIpv4: '192.0.2.10',
 };
 
@@ -45,6 +45,13 @@ test('Cloudflare DNS config fails when a required input is absent', () => {
   assert.throws(
     () => readZephyrApiDnsConfig(stubConfig({ cloudflareZoneId: validConfig.cloudflareZoneId })),
     /apiHostname/,
+  );
+});
+
+test('Cloudflare DNS config rejects a hostname without the approved label', () => {
+  assert.throws(
+    () => readZephyrApiDnsConfig(stubConfig({ ...validConfig, apiHostname: 'api.example.test' })),
+    /approved "zephyr" label/,
   );
 });
 

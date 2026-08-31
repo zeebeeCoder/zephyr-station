@@ -5,17 +5,14 @@
   "main": "index.mjs",
   "scripts": {
     "build": "esbuild src/handler.mjs --bundle --minify --platform=node --target=node20 --external:@aws-sdk/* --outfile=dist/handler.js",
-    "check": "node --check index.mjs && node --check cloudflare-dns.mjs",
-    "test": "node --test",
     "preview": "npm run build && pulumi preview",
     "up": "npm run build && pulumi up",
     "destroy": "pulumi destroy",
     "logs": "pulumi logs -f"
   },
   "dependencies": {
-    "@pulumi/aws": "^6",
-    "@pulumi/cloudflare": "6.20.0",
     "@pulumi/pulumi": "^3",
+    "@pulumi/aws": "^6",
     "postgres": "^3.4.7",
     "zod": "^3.23"
   },

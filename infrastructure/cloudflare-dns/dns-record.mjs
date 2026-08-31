@@ -3,6 +3,7 @@ import { isIP } from 'node:net';
 import * as cloudflare from '@pulumi/cloudflare';
 import * as pulumi from '@pulumi/pulumi';
 
+export const ZEPHYR_API_DNS_LABEL = 'zephyr';
 export const ZEPHYR_API_DNS_RESOURCE_NAME = 'zephyr-api-a';
 export const ZEPHYR_API_DNS_TTL_SECONDS = 300;
 
@@ -28,6 +29,10 @@ export function validateZephyrApiDnsConfig(values) {
 
   if (!hostnamePattern.test(apiHostname)) {
     throw new Error('Pulumi config "apiHostname" must be a fully qualified DNS hostname without a scheme or path');
+  }
+
+  if (!apiHostname.startsWith(`${ZEPHYR_API_DNS_LABEL}.`)) {
+    throw new Error(`Pulumi config "apiHostname" must use the approved "${ZEPHYR_API_DNS_LABEL}" label`);
   }
 
   if (isIP(originIpv4) !== 4) {
