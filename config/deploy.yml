@@ -28,6 +28,9 @@ builder:
 
 proxy:
   app_port: 3000
+  # Sanitize client-supplied forwarding headers; kamal-proxy generates clean
+  # socket-observed X-Forwarded-For/Proto/Host values for the app.
+  forward_headers: false
   healthcheck:
     path: /up
 

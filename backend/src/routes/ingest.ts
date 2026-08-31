@@ -1,9 +1,17 @@
 import { FastifyInstance } from 'fastify';
 import { verifyApiKey } from '../auth.js';
 import { ingestPayloadSchema } from '../lib/schema.js';
+import type { RateLimitRule } from '../security.js';
 
-export async function ingestRoutes(app: FastifyInstance) {
-  app.post('/ingest', { preHandler: verifyApiKey }, async (request, reply) => {
+type IngestRouteOptions = {
+  rateLimit: RateLimitRule;
+};
+
+export async function ingestRoutes(app: FastifyInstance, options: IngestRouteOptions) {
+  app.post('/ingest', {
+    config: { rateLimit: options.rateLimit },
+    preHandler: verifyApiKey,
+  }, async (request, reply) => {
     let body: unknown;
     try {
       body = typeof request.body === 'string' ? JSON.parse(request.body) : request.body;

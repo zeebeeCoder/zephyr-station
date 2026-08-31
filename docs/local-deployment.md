@@ -34,6 +34,27 @@ chmod 600 .kamal/secrets
 # Never commit this file
 ```
 
+## Application Security Baseline
+
+These controls are repository configuration only until a reviewed deploy occurs:
+
+- Fastify accepts request bodies up to **4096 bytes**. A complete compact reading is only a few hundred bytes, so this leaves formatting headroom without retaining Fastify's 1 MiB default. Oversized requests receive HTTP 413 before database work.
+- `POST /v1/ingest` keeps the existing generic 403 contract and compares the shared ingest key through fixed-size SHA-256 digests with `timingSafeEqual`.
+- Request logging redacts `x-api-key`, `authorization`, `cookie`, and `set-cookie` values. Never add those values to messages, query strings, or differently named log fields.
+- `@fastify/helmet` supplies API-appropriate security headers. Content Security Policy and Cross-Origin Resource Policy are disabled because this service returns public JSON rather than HTML and must not impose browser resource policy on consumers.
+- Public read/health routes share a limit of **60 requests per minute per resolved client IP**. Ingest has a separate limit of **120 requests per minute per resolved client IP**, which is comfortably above the normal 12 readings/hour cadence and the outdoor station's roughly eight-reading offline replay buffer.
+- Limits use the plugin's in-memory store. They reset on application restart and are correct for the current single web container. Add a shared store and re-evaluate effective limits before running multiple application replicas.
+
+### Proxy trust invariant
+
+`proxy.forward_headers: false` is explicit in `config/deploy.yml`. With this setting, kamal-proxy v0.9.2 clears client-supplied `X-Forwarded-For`, `X-Forwarded-Proto`, and `X-Forwarded-Host` values, then generates clean values from the socket-observed client connection. Fastify additionally trusts forwarded addresses only when hop 0 is a private/local immediate peer, and it never trusts later hops. A direct public socket therefore cannot make Fastify trust its `X-Forwarded-For` header.
+
+This model depends on port 3000 remaining unpublished and the application being reachable only from kamal-proxy on the private Kamal network. Re-verify forwarding behavior on kamal-proxy upgrades. Adding Cloudflare or another upstream proxy would expose that edge proxy's address to the application, not the original client address, until the entire proxy chain is redesigned and revalidated. Also re-evaluate before adding multiple application hosts.
+
+### Fleet credential gate
+
+One high-entropy shared ingest key is acceptable only for the initial small fleet. Before gateways grow materially, provision per-device/gateway credentials bound to allowed `device_id` values and support individual revocation. Do not weaken the global key or encode it in logs, URLs, or source control.
+
 ## First Deploy
 
 First deployment to a fresh host sets up the proxy and accessories:
