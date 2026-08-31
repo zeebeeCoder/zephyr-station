@@ -16,6 +16,9 @@ export DATABASE_URL="postgres://dummy"
 export INGEST_API_KEY="test-key"
 npm run test:unit
 
+echo "→ Running deterministic private deployment preflight tests..."
+../bin/test-deploy-preflight
+
 echo "→ Running deterministic backup/restore script tests..."
 ../bin/test-backup-scripts
 

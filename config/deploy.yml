@@ -27,7 +27,13 @@ builder:
   arch: amd64
 
 proxy:
+  host: <%= ENV.fetch("ZEPHYR_PRIVATE_HOSTNAME", "zephyr.home.dicr.tech") %>
   app_port: 3000
+  # A custom DNS-01 certificate avoids Kamal's public HTTP/TLS challenge path.
+  ssl:
+    certificate_pem: ZEPHYR_TLS_CERTIFICATE_PEM
+    private_key_pem: ZEPHYR_TLS_PRIVATE_KEY_PEM
+  ssl_redirect: true
   # Sanitize client-supplied forwarding headers; kamal-proxy generates clean
   # socket-observed X-Forwarded-For/Proto/Host values for the app.
   forward_headers: false

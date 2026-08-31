@@ -170,7 +170,8 @@ Sensor data ingestion. Requires `x-api-key` header.
 
 ```
 infrastructure/
-├── cloudflare-dns/        # Isolated Zephyr DNS Pulumi Cloud project
+├── cloudflare-dns/
+│   └── README.md          # Tombstone for removed public-origin DNS project
 ├── index.mjs              # Legacy AWS Pulumi stack definition
 ├── package.json           # Legacy AWS dependencies
 ├── Pulumi.yaml            # Project config
@@ -191,11 +192,13 @@ infrastructure/
     └── handler.js         # Bundled output (esbuild)
 ```
 
-## Isolated public DNS
+## Public origin DNS is disabled
 
-Cloudflare DNS is owned by the separate [`zephyr-dns` project](cloudflare-dns/README.md). The legacy AWS project in this directory has no Cloudflare provider, resource, configuration, or state. Its preview, `npm run up`, and `npm run destroy` commands never create, update, or delete DNS records.
+The former public-origin `zephyr-dns` project is removed from active scope; [`cloudflare-dns/README.md`](cloudflare-dns/README.md) is documentation-only and contains no Pulumi manifest, provider, program, dependencies, stack instructions, or apply command. It was never initialized or applied, so there is no DNS stack to destroy.
 
-Run all DNS installation, stack selection, import, preview, and approval steps from `infrastructure/cloudflare-dns/` only.
+The approved hostname `zephyr.home.dicr.tech` resolves only through household private DNS to `192.168.1.50`. No public `A`, `AAAA`, or `CNAME` should expose the origin. A later reviewed ACME DNS-01 flow may create temporary challenge `TXT` records without reviving this public-A project.
+
+The legacy AWS project in this directory remains separate and unchanged. Its preview, `npm run up`, and `npm run destroy` commands never create, update, or delete Cloudflare DNS records.
 
 ## Deployment
 

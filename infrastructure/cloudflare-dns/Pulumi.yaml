@@ -1,3 +1,0 @@
-name: zephyr-dns
-runtime: nodejs
-description: Zephyr public API DNS in the existing external Cloudflare zone

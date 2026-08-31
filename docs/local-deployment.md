@@ -1,113 +1,156 @@
-# Local Deployment Runbook
+# Private Deployment Runbook
 
-Staging target: `sagent@192.168.1.50` (LAN, private HTTP, no consumer cutover).
+Zephyr's approved client endpoint is `https://zephyr.home.dicr.tech`. It is private even though its certificate is publicly trusted:
+
+```text
+trusted LAN / IoT VLAN / WireGuard
+  -> private DNS: zephyr.home.dicr.tech = 192.168.1.50
+  -> TCP 443 -> kamal-proxy -> Fastify -> Docker-private PostgreSQL
+
+operator -> Tailscale/SSH KAMAL_HOST -> Kamal
+WAN -> no Zephyr forwarding
+```
+
+`KAMAL_HOST` is the SSH deployment address and remains independent of the client hostname. No repository command configures UDM DNS/firewall, Cloudflare, certificate issuance, or WAN forwarding.
 
 ## Prerequisites
 
-- SSH to `sagent@192.168.1.50` verified; Docker on host
-- Ports 80/443/3000/5432 free on host
-- GitHub CLI authenticated with `repo` **and `write:packages`** scopes
-- Ruby/bundler installed locally; run `bundle install`
+- Private SSH to `sagent@<KAMAL_HOST>` is verified, preferably through Tailscale.
+- Docker and the existing Kamal/PostgreSQL deployment are healthy.
+- GHCR credentials have `repo` and `write:packages` access.
+- Ruby/Bundler dependencies are installed with `bundle install`.
+- A reviewed certificate full chain and matching private key cover `zephyr.home.dicr.tech` and have at least 14 days remaining.
+- `.kamal/secrets` is a regular, non-symlink mode-600 file when used.
+- Private DNS and narrow TCP 443 rules are separately approved before client testing.
 
-## Secrets
+The custom certificate must come from the separately reviewed DNS-01 process. This repository does not yet issue or renew it. Kamal's hash-form `proxy.ssl` loads supplied PEM values and does **not** request a public Let's Encrypt challenge.
 
-Kamal resolves declared secrets through `.kamal/secrets`. On a clean checkout this file does not exist.
+## Configuration and secrets
 
-**Option A: Export in shell (recommended)** — create `.kamal/secrets` from the example, then export variables in your shell and leave the forwarding lines unchanged:
+The approved hostname defaults to `zephyr.home.dicr.tech`. An explicit `ZEPHYR_PRIVATE_HOSTNAME` is accepted only when it exactly matches that value. Never use `KAMAL_HOST` as the TLS hostname.
 
-```bash
-cp .kamal/secrets.example .kamal/secrets
-export KAMAL_REGISTRY_PASSWORD=<ghcr-token>
-export POSTGRES_PASSWORD=<strong-password>
-export DATABASE_URL=postgres://zephyr:<password>@zephyr-postgres:5432/zephyr
-export INGEST_API_KEY=<api-key>
-```
-
-The forwarding lines in `.kamal/secrets` (`KAMAL_REGISTRY_PASSWORD=$KAMAL_REGISTRY_PASSWORD`) resolve through the shell environment.
-
-**Option B: Write values directly to `.kamal/secrets`** — copy the example, replace forwarding lines with real values, set mode 600:
+Copy the forwarding template:
 
 ```bash
 cp .kamal/secrets.example .kamal/secrets
-# Edit .kamal/secrets with actual values (not $VAR forwarding)
 chmod 600 .kamal/secrets
-# Never commit this file
 ```
 
-## Application Security Baseline
+Supply these through an approved environment or secret source before running deployment commands:
 
-These controls are repository configuration only until a reviewed deploy occurs:
+- `KAMAL_REGISTRY_PASSWORD`
+- `POSTGRES_PASSWORD`
+- `DATABASE_URL`
+- `INGEST_API_KEY`
+- `ZEPHYR_TLS_CERTIFICATE_PEM` — leaf-first full chain
+- `ZEPHYR_TLS_PRIVATE_KEY_PEM` — matching unencrypted deployment key
 
-- Fastify accepts request bodies up to **4096 bytes**. A complete compact reading is only a few hundred bytes, so this leaves formatting headroom without retaining Fastify's 1 MiB default. Oversized requests receive HTTP 413 before database work.
-- `POST /v1/ingest` keeps the existing generic 403 contract and compares the shared ingest key through fixed-size SHA-256 digests with `timingSafeEqual`.
-- Request logging redacts `x-api-key`, `authorization`, `cookie`, and `set-cookie` values. Never add those values to messages, query strings, or differently named log fields.
-- `@fastify/helmet` supplies API-appropriate security headers. Content Security Policy and Cross-Origin Resource Policy are disabled because this service returns public JSON rather than HTML and must not impose browser resource policy on consumers.
-- Public read/health routes share a limit of **60 requests per minute per resolved client IP**. Ingest has a separate limit of **120 requests per minute per resolved client IP**, which is comfortably above the normal 12 readings/hour cadence and the outdoor station's roughly eight-reading offline replay buffer.
-- Limits use the plugin's in-memory store. They reset on application restart and are correct for the current single web container. Add a shared store and re-evaluate effective limits before running multiple application replicas.
+The TLS values are consumed by Kamal for proxy certificate files. They are not added to the application environment. Do not paste PEM content into source, command arguments, logs, tickets, or documentation.
 
-### Proxy trust invariant
-
-`proxy.forward_headers: false` is explicit in `config/deploy.yml`. With this setting, kamal-proxy v0.9.2 clears client-supplied `X-Forwarded-For`, `X-Forwarded-Proto`, and `X-Forwarded-Host` values, then generates clean values from the socket-observed client connection. Fastify additionally trusts forwarded addresses only when hop 0 is a private/local immediate peer, and it never trusts later hops. A direct public socket therefore cannot make Fastify trust its `X-Forwarded-For` header.
-
-This model depends on port 3000 remaining unpublished and the application being reachable only from kamal-proxy on the private Kamal network. Re-verify forwarding behavior on kamal-proxy upgrades. Adding Cloudflare or another upstream proxy would expose that edge proxy's address to the application, not the original client address, until the entire proxy chain is redesigned and revalidated. Also re-evaluate before adding multiple application hosts.
-
-### Fleet credential gate
-
-One high-entropy shared ingest key is acceptable only for the initial small fleet. Before gateways grow materially, provision per-device/gateway credentials bound to allowed `device_id` values and support individual revocation. Do not weaken the global key or encode it in logs, URLs, or source control.
-
-## Database Startup Retry
-
-Startup migrations make at most **four attempts**, with exponential delays of **250 ms, 500 ms, and 1000 ms** and a **12-second elapsed guard**. Each startup migration connection has a two-second connection timeout, so a continuously unavailable local database normally fails in under ten seconds rather than relying on an unbounded container restart loop.
-
-Only explicit transient connection codes are retried: refused/reset/aborted connections, broken pipes, temporary DNS failure (`EAI_AGAIN`), network/host unreachable or down, postgres.js connection timeout/closed/destroyed errors, and PostgreSQL `08001`, `08006`, or `57P03`. Nested `cause` values are inspected, and an `AggregateError` is retryable only when every contained error is transient. Permanent DNS failure (`ENOTFOUND`), invalid URLs/configuration, authentication failures, and SQL/migration/schema errors fail immediately.
-
-Retry logs contain only attempt count, delay, and error code—never the database URL, message, or credentials. A shutdown signal aborts an in-progress backoff instead of scheduling another attempt.
-
-Backup, isolated-only restore testing, manual production-recovery gates, and uninstalled systemd timer templates are documented in [PostgreSQL Backup and Restore Runbook](postgres-backup-restore.md).
-
-## First Deploy
-
-First deployment to a fresh host sets up the proxy and accessories:
+Set the private deployment address and run the non-mutating preflight:
 
 ```bash
-export KAMAL_HOST=192.168.1.50
-bin/deploy setup
+export KAMAL_HOST=100.108.58.19
+export ZEPHYR_PRIVATE_HOSTNAME=zephyr.home.dicr.tech  # optional exact override
+bin/deploy check
 ```
 
-Subsequent deployments:
+Preflight requires a clean tree; validates the secrets-file type/mode, certificate/key syntax and match, exact hostname SAN, and 14-day validity floor; then validates the Bundler and Kamal configuration. It suppresses raw PEM/OpenSSL/Kamal output.
+
+## Private DNS and TLS boundary
+
+Required external state, applied only through separate approval:
+
+- UDM local DNS returns `192.168.1.50` for `zephyr.home.dicr.tech` to trusted, IoT, and WireGuard clients.
+- Public resolvers return no Zephyr origin `A`, `AAAA`, or `CNAME`.
+- Only the approved station/master can cross from IoT to `192.168.1.50:443`; DHCP, private DNS, and NTP remain available as required.
+- WireGuard clients can reach private DNS and `192.168.1.50:443`.
+- WAN TCP 22/80/443/3000/5432 remains closed; Tailscale remains the administration plane.
+
+The removed `infrastructure/cloudflare-dns` public-A project must not be reconstructed or applied. DNS-01 certificate issuance uses temporary `_acme-challenge` TXT records only.
+
+After private DNS/network approval, validate the certificate and route without publishing DNS by using a local override from an authorized client:
 
 ```bash
-export KAMAL_HOST=192.168.1.50
-bin/deploy
+curl --fail --show-error \
+  --resolve zephyr.home.dicr.tech:443:192.168.1.50 \
+  https://zephyr.home.dicr.tech/up
 ```
 
-## Operations
+Do not use `--insecure`. Verify SAN, issuer/chain, and expiry independently before consumer cutover.
 
-All `bundle exec kamal ...` commands below assume `KAMAL_HOST` is exported in the current shell (or prefixed on each command). If absent, the config falls back to `placeholder.local`.
+## Application security baseline
+
+- Fastify limits request bodies to 4096 bytes.
+- Ingest retains the generic 403 contract and timing-safe digest comparison.
+- Logs redact API keys, authorization, cookies, and response cookies.
+- Helmet supplies API-appropriate headers.
+- Private read/health routes are rate-limited in memory for the current single replica: 60 reads/minute/IP and 120 ingest requests/minute/IP.
+- `proxy.forward_headers: false` makes kamal-proxy sanitize client forwarding headers; Fastify trusts only one private/local immediate proxy hop.
+- Port 3000 stays unpublished and PostgreSQL remains reachable only on the Kamal Docker network.
+- The shared ingest key is temporary for the small fleet; per-device credentials remain required before expansion.
+
+Startup migration retries are bounded to four attempts, waits of 250/500/1000 ms, and a 12-second elapsed guard. Only explicit transient connectivity codes retry; logs omit connection strings and raw error messages.
+
+## Backup gate
+
+Application deployment does not install or invoke the backup timer. Before reliability acceptance or consumer cutover, the owner must:
+
+1. create `/var/lib/zephyr/backups` as `sagent:sagent` mode 700;
+2. run one reviewed staging backup and isolated restore proof;
+3. separately review and install/enable the timer;
+4. verify the first timer invocation.
+
+See [PostgreSQL Backup and Restore Runbook](postgres-backup-restore.md). Missing backup storage is not permission to restore over production or delete PostgreSQL data.
+
+## Deployment is temporarily check-only
+
+This slice validates configuration but deliberately does not publish custom TLS. Kamal 2.12's default custom-key upload permissions are not acceptable for the private key, and issuance/renewal is not installed. Preserve the currently running `1ffd97a` staging deployment.
+
+```bash
+export KAMAL_HOST=100.108.58.19
+bin/deploy check
+```
+
+`bin/deploy` and `bin/deploy setup` run the same preflight and then fail closed before CI or any mutating Kamal command. The later ACME slice must add and prove the restricted host TLS directory/publication hook and renewal path before re-enabling them. When live actions are restored, CI must run with registry, database, ingest, and both TLS PEM secrets explicitly removed from its subprocess environment.
+
+## Verification
+
+Keep writers/consumers on their previous endpoint until all approved checks pass:
+
+1. `https://zephyr.home.dicr.tech/up` and `/ready` return 200 through private resolution.
+2. `/v1/hello`, widget, and history preserve their contracts.
+3. Authenticated ingest succeeds; missing/wrong keys, oversized bodies, and rate limits retain expected behavior.
+4. Existing staging readings survive application replacement.
+5. Application runs non-root and logs contain no secrets.
+6. Host ports 3000/5432 remain unpublished; WAN probes remain closed.
+7. Certificate SAN/chain/expiry validate from representative trusted, IoT, and WireGuard clients.
+8. Public DNS does not disclose the origin.
+
+Do not cut over ESP/iOS clients until DNS, TLS, routing, backup proof, and rollback are all approved.
+
+## Operations and rollback
+
+All Kamal commands require `KAMAL_HOST` and the custom TLS inputs because rendering is fail-closed.
 
 | Command | Purpose |
 |---|---|
-| `KAMAL_HOST=192.168.1.50 bin/deploy` | Full deploy (CI + deploy) |
-| `KAMAL_HOST=192.168.1.50 bin/deploy setup` | First-time setup (proxy + accessories + deploy) |
+| `bin/deploy check` | Validate clean tree, secrets, TLS, bundle, and Kamal config only |
+| `bin/deploy` | Temporarily blocked after preflight; performs no live action |
+| `bin/deploy setup` | Temporarily blocked after preflight; performs no live action |
+| `bundle exec kamal details` | Show deployment status |
 | `bundle exec kamal app logs` | Tail application logs |
 | `bundle exec kamal accessory logs postgres` | Tail PostgreSQL logs |
-| `bundle exec kamal details` | Show deployment status |
-| `bundle exec kamal app boot` | Start application containers |
-| `bundle exec kamal app stop` | Stop application containers |
-| `bundle exec kamal app remove` | Remove application from host (data preserved) |
-| `bundle exec kamal accessory remove postgres` | Remove PostgreSQL container (data preserved) |
-| `bundle exec kamal app images` | List available release images |
-| `bundle exec kamal redeploy` | Zero-downtime redeploy (pulls new image, replaces containers) |
-| `bundle exec kamal rollback <VERSION>` | Rollback to a specific release (discover versions via `app images`) |
-| `bin/backup-postgres` | Create and retain a validated local logical backup |
-| `bin/restore-postgres --archive <absolute-path>` | Restore into a generated isolated database |
-| `bin/test-backup-restore --archive <absolute-path>` | Manually prove a live isolated restore (not normal CI) |
+| `bundle exec kamal app images` | List rollback image versions |
+| `bundle exec kamal rollback <VERSION>` | Roll back application version |
 
-## Teardown Guardrails
+Before a later approved deployment, record the current application version and retain its image. Application rollback must not remove PostgreSQL or its bind mount. Certificate rollback must restore a previously approved certificate/key version through the hardened publication path; never disable hostname validation or open WAN ports as a workaround.
 
-- Do **not** destroy `/var/lib/zephyr` without a verified backup and restore test
-- Do **not** retire AWS/Supabase until all consumers (gateway, iOS, web assistant) have been cut over and observed for several days
-- Do **not** expose public DNS or TLS until network decisions are confirmed
-- Keep GHCR images and Git branches for at least two releases to enable rollback
-- PostgreSQL data lives in `/var/lib/zephyr/postgres` on the host; container replacement does not erase it
-- `bundle exec kamal remove` removes proxy, app, accessories, and registry session — this is a full teardown, not app-only removal
+Certificate issuance, restricted-key publication, renewal timers, expiry alerting, and safe proxy reload behavior require a later reviewed implementation and live proof. Until then, live actions remain blocked and this endpoint is not ready for consumer cutover.
+
+## Teardown guardrails
+
+- Never run full `kamal remove` as an app rollback; it removes proxy, app, accessories, and registry session.
+- Never remove the PostgreSQL accessory or `/var/lib/zephyr` without approved backup/restore gates.
+- Never expose 3000/5432, publish public API DNS, or create WAN forwarding.
+- Keep AWS/Supabase and at least two GHCR application versions until private consumers are observed and retirement is separately approved.

@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/zephyr-deploy-tests.XXXXXX")
+TESTS_RUN=0
+trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
+
+fail() { echo "FAIL: $*" >&2; exit 1; }
+pass() { TESTS_RUN=$((TESTS_RUN + 1)); echo "  ✓ $1"; }
+
+repo="$TEST_ROOT/repo"
+fake_bin="$TEST_ROOT/bin"
+mkdir -p "$repo/bin" "$repo/.kamal" "$fake_bin" "$TEST_ROOT/tmp"
+cp "$REPO_ROOT/bin/deploy" "$repo/bin/deploy"
+chmod 755 "$repo/bin/deploy"
+
+cat > "$fake_bin/git" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "${1:-}" = status ] || exit 90
+SH
+cat > "$fake_bin/bundle" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'bundle %s\n' "$*" >> "${DEPLOY_TEST_LOG:?}"
+case "$*" in
+  check|'exec kamal config') exit 0 ;;
+  *) exit 91 ;;
+esac
+SH
+cat > "$fake_bin/ruby" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "$*" = "-e print Gem.user_dir" ]; then
+  printf '%s' "${DEPLOY_TEST_GEM_DIR:?}"
+else
+  exec /usr/bin/ruby "$@"
+fi
+SH
+cat > "$repo/bin/ci" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'ci\n' >> "${DEPLOY_TEST_LOG:?}"
+SH
+chmod 755 "$fake_bin/git" "$fake_bin/bundle" "$fake_bin/ruby" "$repo/bin/ci"
+
+make_certificate() {
+  local hostname=$1 days=$2 prefix=$3
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+    -days "$days" -subj "/CN=$hostname" -addext "subjectAltName=DNS:$hostname" \
+    -keyout "$prefix.key" -out "$prefix.crt" >/dev/null 2>&1
+}
+
+make_certificate zephyr.home.dicr.tech 30 "$TEST_ROOT/valid"
+make_certificate wrong.home.dicr.tech 30 "$TEST_ROOT/wrong-host"
+make_certificate zephyr.home.dicr.tech 1 "$TEST_ROOT/expiring"
+make_certificate zephyr.home.dicr.tech 30 "$TEST_ROOT/other-key"
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+  -days 30 -subj '/CN=zephyr.home.dicr.tech' \
+  -keyout "$TEST_ROOT/cn-only.key" -out "$TEST_ROOT/cn-only.crt" >/dev/null 2>&1
+
+valid_certificate=$(<"$TEST_ROOT/valid.crt")
+valid_key=$(<"$TEST_ROOT/valid.key")
+wrong_host_certificate=$(<"$TEST_ROOT/wrong-host.crt")
+wrong_host_key=$(<"$TEST_ROOT/wrong-host.key")
+expiring_certificate=$(<"$TEST_ROOT/expiring.crt")
+expiring_key=$(<"$TEST_ROOT/expiring.key")
+other_key=$(<"$TEST_ROOT/other-key.key")
+cn_only_certificate=$(<"$TEST_ROOT/cn-only.crt")
+cn_only_key=$(<"$TEST_ROOT/cn-only.key")
+registry_marker=registry-secret-do-not-print
+
+deploy_log="$TEST_ROOT/deploy.log"
+run_check() {
+  local output=$1 certificate=$2 key=$3 hostname=${4:-DEFAULT}
+  local action=${5:-check} kamal_host=${6:-100.108.58.19}
+  local -a command=(
+    env -i
+    "PATH=$fake_bin:$PATH"
+    "HOME=$TEST_ROOT"
+    "TMPDIR=$TEST_ROOT/tmp"
+    "DEPLOY_TEST_LOG=$deploy_log"
+    "DEPLOY_TEST_GEM_DIR=$TEST_ROOT/user-gems"
+    "KAMAL_HOST=$kamal_host"
+    "KAMAL_REGISTRY_PASSWORD=$registry_marker"
+    'DATABASE_URL=database-secret-do-not-print'
+    'INGEST_API_KEY=ingest-secret-do-not-print'
+    "POSTGRES_PASSWORD=$registry_marker"
+    "ZEPHYR_TLS_CERTIFICATE_PEM=$certificate"
+    "ZEPHYR_TLS_PRIVATE_KEY_PEM=$key"
+  )
+  if [ "$hostname" != DEFAULT ]; then
+    command+=("ZEPHYR_PRIVATE_HOSTNAME=$hostname")
+  fi
+  "${command[@]}" "$repo/bin/deploy" "$action" > "$output" 2>&1
+}
+
+expect_failure() {
+  local label=$1 certificate=$2 key=$3 hostname=${4:-DEFAULT}
+  local action=${5:-check} kamal_host=${6:-100.108.58.19} output="$TEST_ROOT/$1.out"
+  if run_check "$output" "$certificate" "$key" "$hostname" "$action" "$kamal_host"; then
+    fail "$label unexpectedly passed"
+  fi
+  if grep -Fq "$registry_marker" "$output" || grep -q 'BEGIN .*PRIVATE KEY' "$output"; then
+    fail "$label leaked secret content"
+  fi
+}
+
+echo "→ Checking private deployment preflight..."
+
+expect_failure missing-certificate '' "$valid_key"
+expect_failure missing-key "$valid_certificate" ''
+expect_failure malformed-certificate 'not-a-certificate' "$valid_key"
+pass "missing or malformed TLS inputs fail without leaking secrets"
+
+expect_failure wrong-hostname "$valid_certificate" "$valid_key" public.example.test
+expect_failure unapproved-kamal-host "$valid_certificate" "$valid_key" DEFAULT check 203.0.113.10
+expect_failure wrong-san "$wrong_host_certificate" "$wrong_host_key"
+expect_failure cn-without-san "$cn_only_certificate" "$cn_only_key"
+expect_failure mismatched-key "$valid_certificate" "$other_key"
+expect_failure expiring-certificate "$expiring_certificate" "$expiring_key"
+pass "deployment address, exact DNS SAN, key pairing, and minimum validity are enforced"
+
+cat > "$repo/.kamal/secrets" <<'SH'
+KAMAL_REGISTRY_PASSWORD=$KAMAL_REGISTRY_PASSWORD
+SH
+chmod 644 "$repo/.kamal/secrets"
+expect_failure insecure-secrets-mode "$valid_certificate" "$valid_key"
+cat > "$repo/.kamal/secrets" <<'SH'
+ZEPHYR_PRIVATE_HOSTNAME=other.home.dicr.tech
+SH
+chmod 600 "$repo/.kamal/secrets"
+expect_failure secrets-hostname-override "$valid_certificate" "$valid_key"
+cat > "$repo/.kamal/secrets" <<'SH'
+KAMAL_HOST=192.168.1.50
+SH
+expect_failure secrets-deployment-address-override "$valid_certificate" "$valid_key"
+rm "$repo/.kamal/secrets"
+pass "insecure secrets files and hostname/deployment-address overrides are rejected"
+
+: > "$deploy_log"
+valid_output="$TEST_ROOT/valid.out"
+run_check "$valid_output" "$valid_certificate" "$valid_key"
+grep -q 'Deployment preflight passed for zephyr.home.dicr.tech' "$valid_output" \
+  || fail "Valid preflight did not use the approved default hostname"
+[ "$(cat "$deploy_log")" = $'bundle check\nbundle exec kamal config' ] \
+  || fail "Check action ran commands beyond bundle/config validation"
+if grep -Fq "$registry_marker" "$valid_output" || grep -q 'BEGIN .*PRIVATE KEY' "$valid_output"; then
+  fail "Valid preflight leaked secret content"
+fi
+pass "valid check is non-mutating and secret-safe"
+
+for blocked_action in deploy setup; do
+  : > "$deploy_log"
+  output="$TEST_ROOT/blocked-$blocked_action.out"
+  if run_check "$output" "$valid_certificate" "$valid_key" DEFAULT "$blocked_action"; then
+    fail "$blocked_action unexpectedly passed the temporary publication gate"
+  fi
+  grep -q 'private TLS publication hardening and renewal' "$output" \
+    || fail "$blocked_action failure was not generic"
+  [ "$(cat "$deploy_log")" = $'bundle check\nbundle exec kamal config' ] \
+    || fail "$blocked_action reached CI or a mutating Kamal command"
+done
+pass "deploy and setup remain disabled before publication hardening"
+
+mkdir -p "$TEST_ROOT/user-gems/bin"
+mv "$fake_bin/bundle" "$TEST_ROOT/user-gems/bin/bundle"
+: > "$deploy_log"
+run_check "$TEST_ROOT/user-gem-bundle.out" "$valid_certificate" "$valid_key"
+[ "$(cat "$deploy_log")" = $'bundle check\nbundle exec kamal config' ] \
+  || fail "User-gem Bundler was not discovered"
+mv "$TEST_ROOT/user-gems/bin/bundle" "$fake_bin/bundle"
+pass "preflight discovers Bundler in the Ruby user gem bin"
+
+node - "$REPO_ROOT/config/deploy.yml" <<'NODE'
+const fs = require('node:fs');
+const text = fs.readFileSync(process.argv[2], 'utf8');
+function requireMatch(pattern, message) {
+  if (!pattern.test(text)) throw new Error(message);
+}
+requireMatch(/^  host: <%= ENV\.fetch\("ZEPHYR_PRIVATE_HOSTNAME", "zephyr\.home\.dicr\.tech"\) %>$/m, 'wrong host');
+requireMatch(/^  ssl:\n    certificate_pem: ZEPHYR_TLS_CERTIFICATE_PEM\n    private_key_pem: ZEPHYR_TLS_PRIVATE_KEY_PEM$/m, 'ssl must be custom');
+requireMatch(/^  ssl_redirect: true$/m, 'redirect disabled');
+requireMatch(/^  forward_headers: false$/m, 'forwarding changed');
+const envBlock = text.match(/^env:\n([\s\S]*?)^ssh:/m)?.[1] ?? '';
+if (/ZEPHYR_TLS_(CERTIFICATE|PRIVATE_KEY)_PEM/.test(envBlock)) throw new Error('TLS secret leaked to app env');
+NODE
+pass "Kamal config renders exact private-host custom TLS without app secret injection"
+
+for removed in Pulumi.yaml index.mjs dns-record.mjs package.json package-lock.json test/dns-record.test.mjs; do
+  [ ! -e "$REPO_ROOT/infrastructure/cloudflare-dns/$removed" ] \
+    || fail "Public-A Pulumi scope remains active: $removed"
+done
+[ -f "$REPO_ROOT/infrastructure/cloudflare-dns/README.md" ] \
+  || fail "Disabled DNS tombstone is missing"
+if git -C "$REPO_ROOT" grep -q '@pulumi/cloudflare' -- infrastructure; then
+  fail "Cloudflare provider remains in active infrastructure scope"
+fi
+pass "public-A Pulumi project is documentation-only"
+
+echo "→ Private deployment preflight tests passed ($TESTS_RUN checks)."

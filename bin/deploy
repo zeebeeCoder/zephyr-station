@@ -3,78 +3,176 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+readonly APPROVED_PRIVATE_HOSTNAME=zephyr.home.dicr.tech
+readonly APPROVED_TAILNET_HOST=100.108.58.19
+readonly APPROVED_LAN_HOST=192.168.1.50
+readonly CERTIFICATE_MIN_VALIDITY_SECONDS=$((14 * 24 * 60 * 60))
 
 cd "$REPO_ROOT"
+umask 077
 
-ACTION="${1:-deploy}"
-if [ "$ACTION" != "deploy" ] && [ "$ACTION" != "setup" ]; then
-  echo "ERROR: Invalid action '$ACTION'. Must be 'deploy' or 'setup'."
-  exit 1
-fi
-
-# 1. Fail on dirty tree
-if [ -n "$(git status --porcelain)" ]; then
-  echo "ERROR: Dirty tree. Commit or stash before deploying."
-  exit 1
-fi
-
-# 2. Require KAMAL_HOST
-if [ -z "${KAMAL_HOST:-}" ]; then
-  echo "ERROR: KAMAL_HOST must be set (e.g., export KAMAL_HOST=192.168.1.50)"
-  exit 1
-fi
-
-# 3. Check bundle is available
-if ! command -v bundle >/dev/null 2>&1; then
-  echo "ERROR: 'bundle' not found. Install Ruby/bundler and ensure it's on PATH."
-  echo "  gem install bundler"
-  echo "  Or check: export PATH=\"\$(ruby -e 'print Gem.user_dir')/bin:\$PATH\""
-  exit 1
-fi
-
-# 4. Check required secrets without printing values
-# Source .kamal/secrets with nounset disabled (the template may reference unset vars)
-set +u
-if [ -f .kamal/secrets ]; then
-  if ! source .kamal/secrets; then
-    set -u
-    echo "ERROR: Failed to source .kamal/secrets"
+ACTION=${1:-deploy}
+case "$ACTION" in
+  check|deploy|setup) ;;
+  *)
+    echo "ERROR: Invalid action '$ACTION'. Must be 'check', 'deploy', or 'setup'." >&2
     exit 1
+    ;;
+esac
+
+if [ -n "$(git status --porcelain)" ]; then
+  echo "ERROR: Dirty tree. Commit or stash before deploying." >&2
+  exit 1
+fi
+
+caller_kamal_host=${KAMAL_HOST:-}
+case "$caller_kamal_host" in
+  "$APPROVED_TAILNET_HOST"|"$APPROVED_LAN_HOST") ;;
+  *)
+    echo "ERROR: Caller KAMAL_HOST is not an approved private deployment address." >&2
+    exit 1
+    ;;
+esac
+
+if ! command -v bundle >/dev/null 2>&1 && command -v ruby >/dev/null 2>&1; then
+  user_gem_bin=$(ruby -e 'print Gem.user_dir' 2>/dev/null)/bin
+  if [[ "$user_gem_bin" == /* ]] && [ -x "$user_gem_bin/bundle" ]; then
+    PATH="$user_gem_bin:$PATH"
+    export PATH
   fi
 fi
-set -u
 
-REQUIRED_SECRETS=("KAMAL_REGISTRY_PASSWORD" "DATABASE_URL" "INGEST_API_KEY" "POSTGRES_PASSWORD")
-MISSING=()
-
-for secret in "${REQUIRED_SECRETS[@]}"; do
-  if [ -z "${!secret:-}" ]; then
-    MISSING+=("$secret")
+for command in bundle cmp grep mktemp openssl stat; do
+  if ! command -v "$command" >/dev/null 2>&1; then
+    echo "ERROR: Required command not found: $command" >&2
+    exit 1
   fi
 done
 
-if [ ${#MISSING[@]} -ne 0 ]; then
-  echo "ERROR: Required secrets not set: ${MISSING[*]}"
-  echo "  Copy .kamal/secrets.example to .kamal/secrets, then either:"
-  echo "    - Export the variables in your shell (forwarding lines in .kamal/secrets resolve them), or"
-  echo "    - Replace forwarding lines with actual values in .kamal/secrets and chmod 600."
-  echo "  Never commit secrets."
+if [ -e .kamal/secrets ] || [ -L .kamal/secrets ]; then
+  if [ ! -f .kamal/secrets ] || [ -L .kamal/secrets ]; then
+    echo "ERROR: .kamal/secrets must be a regular non-symlink file." >&2
+    exit 1
+  fi
+  if [ "$(stat -c %a .kamal/secrets)" != 600 ]; then
+    echo "ERROR: .kamal/secrets must be mode 600." >&2
+    exit 1
+  fi
+
+  set +u
+  # shellcheck source=/dev/null
+  if ! source .kamal/secrets; then
+    set -u
+    echo "ERROR: Failed to source .kamal/secrets." >&2
+    exit 1
+  fi
+  set -u
+fi
+
+if [ "${KAMAL_HOST:-}" != "$caller_kamal_host" ]; then
+  echo "ERROR: .kamal/secrets must not override caller KAMAL_HOST." >&2
+  exit 1
+fi
+ZEPHYR_PRIVATE_HOSTNAME=${ZEPHYR_PRIVATE_HOSTNAME:-$APPROVED_PRIVATE_HOSTNAME}
+export ZEPHYR_PRIVATE_HOSTNAME
+if [ "$ZEPHYR_PRIVATE_HOSTNAME" != "$APPROVED_PRIVATE_HOSTNAME" ]; then
+  echo "ERROR: ZEPHYR_PRIVATE_HOSTNAME must be $APPROVED_PRIVATE_HOSTNAME." >&2
   exit 1
 fi
 
-# 5. Run CI
-echo "→ Running CI..."
-bin/ci
-
-# 6. Check bundle
-echo "→ Checking bundle..."
-bundle check
-
-# 7. Deploy or setup
-if [ "$ACTION" == "setup" ]; then
-  echo "→ Setting up on $KAMAL_HOST..."
-  bundle exec kamal setup
-else
-  echo "→ Deploying to $KAMAL_HOST..."
-  bundle exec kamal deploy
+required_secrets=(
+  KAMAL_REGISTRY_PASSWORD
+  DATABASE_URL
+  INGEST_API_KEY
+  POSTGRES_PASSWORD
+  ZEPHYR_TLS_CERTIFICATE_PEM
+  ZEPHYR_TLS_PRIVATE_KEY_PEM
+)
+missing=()
+for secret in "${required_secrets[@]}"; do
+  if [ -z "${!secret:-}" ]; then missing+=("$secret"); fi
+done
+if [ "${#missing[@]}" -ne 0 ]; then
+  echo "ERROR: Required secrets not set: ${missing[*]}" >&2
+  echo "  Use mode-600 .kamal/secrets forwarding entries or an approved secret source." >&2
+  echo "  Never commit or print secret values." >&2
+  exit 1
 fi
+
+tls_temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/zephyr-deploy-tls.XXXXXX")
+cleanup() {
+  [ -z "${tls_temp_dir:-}" ] || {
+    rm -f -- "$tls_temp_dir/certificate.pem" "$tls_temp_dir/private-key.pem" \
+      "$tls_temp_dir/certificate-public.der" "$tls_temp_dir/key-public.der"
+    rmdir -- "$tls_temp_dir" 2>/dev/null || true
+  }
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+certificate_file="$tls_temp_dir/certificate.pem"
+private_key_file="$tls_temp_dir/private-key.pem"
+printf '%s\n' "$ZEPHYR_TLS_CERTIFICATE_PEM" > "$certificate_file"
+printf '%s\n' "$ZEPHYR_TLS_PRIVATE_KEY_PEM" > "$private_key_file"
+
+if ! openssl x509 -in "$certificate_file" -noout >/dev/null 2>&1; then
+  echo "ERROR: TLS certificate PEM is invalid." >&2
+  exit 1
+fi
+if ! openssl pkey -in "$private_key_file" -check -noout >/dev/null 2>&1; then
+  echo "ERROR: TLS private key PEM is invalid." >&2
+  exit 1
+fi
+if ! openssl x509 -in "$certificate_file" -noout -ext subjectAltName 2>/dev/null \
+  | grep -Eq '(^|[,:[:space:]])DNS:zephyr\.home\.dicr\.tech([,[:space:]]|$)'; then
+  echo "ERROR: TLS certificate requires an exact DNS SAN for $ZEPHYR_PRIVATE_HOSTNAME." >&2
+  exit 1
+fi
+if ! openssl x509 -in "$certificate_file" -noout \
+  -checkhost "$ZEPHYR_PRIVATE_HOSTNAME" >/dev/null 2>&1; then
+  echo "ERROR: TLS certificate does not cover $ZEPHYR_PRIVATE_HOSTNAME." >&2
+  exit 1
+fi
+if ! openssl x509 -in "$certificate_file" -noout \
+  -checkend "$CERTIFICATE_MIN_VALIDITY_SECONDS" >/dev/null 2>&1; then
+  echo "ERROR: TLS certificate expires within 14 days." >&2
+  exit 1
+fi
+if ! { openssl x509 -in "$certificate_file" -pubkey -noout 2>/dev/null \
+  | openssl pkey -pubin -outform DER 2>/dev/null \
+  > "$tls_temp_dir/certificate-public.der"; }; then
+  echo "ERROR: Failed to inspect TLS certificate public key." >&2
+  exit 1
+fi
+if ! openssl pkey -in "$private_key_file" -pubout -outform DER \
+  > "$tls_temp_dir/key-public.der" 2>/dev/null; then
+  echo "ERROR: Failed to inspect TLS private key." >&2
+  exit 1
+fi
+if ! cmp -s "$tls_temp_dir/certificate-public.der" "$tls_temp_dir/key-public.der"; then
+  echo "ERROR: TLS certificate and private key do not match." >&2
+  exit 1
+fi
+cleanup
+tls_temp_dir=''
+
+if ! bundle check >/dev/null 2>&1; then
+  echo "ERROR: Bundle is incomplete; run bundle install." >&2
+  exit 1
+fi
+if ! bundle exec kamal config >/dev/null 2>&1; then
+  echo "ERROR: Kamal configuration validation failed." >&2
+  exit 1
+fi
+
+if [ "$ACTION" = check ]; then
+  echo "→ Deployment preflight passed for $ZEPHYR_PRIVATE_HOSTNAME via $KAMAL_HOST"
+  exit 0
+fi
+
+# When live actions are enabled, run CI with all production secrets and PEMs
+# explicitly removed from its environment before invoking Kamal.
+echo "ERROR: $ACTION is disabled until private TLS publication hardening and renewal are installed." >&2
+exit 1
