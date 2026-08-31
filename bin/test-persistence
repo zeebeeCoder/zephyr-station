@@ -5,10 +5,13 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMPOSE_FILE="$REPO_ROOT/backend/docker-compose.yml"
 MAX_WAIT=30
+BACKUP_TEST_PARENT=$(mktemp -d "${TMPDIR:-/tmp}/zephyr-persistence-backup.XXXXXX")
+BACKUP_ROOT="$BACKUP_TEST_PARENT/backups"
 
 cleanup() {
   echo "→ Tearing down persistence test environment..."
   docker compose -f "$COMPOSE_FILE" down -v || true
+  rm -rf -- "$BACKUP_TEST_PARENT"
 }
 trap cleanup EXIT
 
@@ -63,3 +66,16 @@ else
   echo "→ Persistence test failed: reading not found after recreation"
   exit 1
 fi
+
+echo "→ Proving an actual backup and isolated restore against ephemeral PostgreSQL..."
+postgres_container=$(docker compose -f "$COMPOSE_FILE" ps -q postgres)
+[ -n "$postgres_container" ] || { echo "→ ERROR: PostgreSQL container ID not found"; exit 1; }
+ZEPHYR_POSTGRES_CONTAINER="$postgres_container" \
+ZEPHYR_BACKUP_ROOT="$BACKUP_ROOT" \
+  "$SCRIPT_DIR/backup-postgres"
+archive=$(find "$BACKUP_ROOT/daily" -mindepth 2 -maxdepth 2 -type f -name zephyr.dump -print -quit)
+[ -n "$archive" ] || { echo "→ ERROR: Backup archive was not published"; exit 1; }
+ZEPHYR_POSTGRES_CONTAINER="$postgres_container" \
+ZEPHYR_BACKUP_ROOT="$BACKUP_ROOT" \
+  "$SCRIPT_DIR/test-backup-restore" --archive "$archive"
+echo "→ Ephemeral backup/restore proof passed"

@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly Zephyr PostgreSQL logical backup
+
+[Timer]
+OnCalendar=*-*-* 02:15:00 UTC
+Persistent=true
+Unit=zephyr-postgres-backup.service
+
+[Install]
+WantedBy=timers.target

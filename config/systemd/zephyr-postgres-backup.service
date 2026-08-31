@@ -1,0 +1,15 @@
+[Unit]
+Description=Zephyr PostgreSQL logical backup
+Wants=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=sagent
+Group=sagent
+UMask=0077
+WorkingDirectory=/home/sagent/code/opti/zephyr-station
+ExecStart=/home/sagent/code/opti/zephyr-station/bin/backup-postgres
+TimeoutStartSec=15min
+NoNewPrivileges=true
+PrivateTmp=true

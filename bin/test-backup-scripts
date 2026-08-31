@@ -1,0 +1,206 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+FIXTURES="$REPO_ROOT/test/fixtures/backup"
+ORIGINAL_PATH=$PATH
+TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/zephyr-backup-tests.XXXXXX")
+TESTS_RUN=0
+trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
+
+fail() { echo "FAIL: $*" >&2; exit 1; }
+pass() { TESTS_RUN=$((TESTS_RUN + 1)); echo "  ✓ $1"; }
+assert_exists() { [ -e "$1" ] || fail "Expected path: $1"; }
+assert_missing() { [ ! -e "$1" ] || fail "Expected absent path: $1"; }
+assert_point_count() {
+  local expected=$1 directory=$2 actual
+  actual=$(find "$directory" -mindepth 1 -maxdepth 1 -type d ! -name '.tmp-*' | wc -l)
+  [ "$actual" -eq "$expected" ] || fail "Expected $expected points in $directory, got $actual"
+}
+
+create_point() {
+  local root=$1 family=$2 name=$3 payload=${4:-fixture} point digest
+  point="$root/$family/$name"
+  mkdir -p "$root/daily" "$root/weekly" "$point"
+  chmod 700 "$root" "$root/daily" "$root/weekly"
+  printf 'FAKE_CUSTOM_ARCHIVE\n%s\n' "$payload" > "$point/zephyr.dump"
+  digest=$(sha256sum "$point/zephyr.dump"); digest=${digest%% *}
+  printf '%s  zephyr.dump\n' "$digest" > "$point/SHA256SUMS"
+  : > "$point/COMPLETE"
+  chmod 700 "$point"
+  chmod 600 "$point"/*
+}
+
+run_backup() {
+  local root=$1 log=$2
+  shift 2
+  env PATH="$FIXTURES:$ORIGINAL_PATH" FAKE_DOCKER_LOG="$log" \
+    ZEPHYR_BACKUP_ROOT="$root" "$@" "$REPO_ROOT/bin/backup-postgres"
+}
+
+run_restore() {
+  local root=$1 log=$2
+  shift 2
+  env PATH="$FIXTURES:$ORIGINAL_PATH" FAKE_DOCKER_LOG="$log" \
+    FAKE_DATABASE_EXISTS="${FAKE_DATABASE_EXISTS:-0}" \
+    FAKE_PSQL_FAIL="${FAKE_PSQL_FAIL:-0}" \
+    FAKE_RESTORE_FAIL="${FAKE_RESTORE_FAIL:-0}" \
+    ZEPHYR_BACKUP_ROOT="$root" "$REPO_ROOT/bin/restore-postgres" "$@"
+}
+
+echo "→ Checking backup script syntax..."
+bash -n "$REPO_ROOT/bin/backup-postgres" "$REPO_ROOT/bin/restore-postgres" \
+  "$REPO_ROOT/bin/test-backup-restore" "$REPO_ROOT/bin/lib/postgres-backup-common.sh" \
+  "$FIXTURES/docker" "$FIXTURES/date"
+if command -v systemd-analyze >/dev/null 2>&1; then
+  systemd-analyze verify "$REPO_ROOT/config/systemd/zephyr-postgres-backup.service" \
+    "$REPO_ROOT/config/systemd/zephyr-postgres-backup.timer"
+fi
+
+# One successful backup publishes complete daily and weekly directories even on Monday.
+case_dir="$TEST_ROOT/success"; root="$case_dir/backups"; log="$case_dir/docker.log"
+mkdir -p "$case_dir"
+run_backup "$root" "$log" > "$case_dir/output"
+daily="$root/daily/20260831T010203Z"; weekly="$root/weekly/2026-W35"
+for point in "$daily" "$weekly"; do
+  assert_exists "$point/zephyr.dump"; assert_exists "$point/SHA256SUMS"; assert_exists "$point/COMPLETE"
+  [ "$(stat -c %a "$point")" = 700 ] || fail "Point is not mode 700"
+  [ "$(stat -c %a "$point/zephyr.dump")" = 600 ] || fail "Archive is not mode 600"
+  (cd "$point" && sha256sum --check SHA256SUMS >/dev/null)
+done
+[ "$(stat -c %i "$daily/zephyr.dump")" = "$(stat -c %i "$weekly/zephyr.dump")" ] \
+  || fail "Weekly archive is not hardlinked to the first daily point"
+[ -z "$(find "$root/daily" "$root/weekly" -mindepth 1 -maxdepth 1 -type d -name '.tmp-*' -print -quit)" ] \
+  || fail "Unpublished point directory remained"
+grep -q 'pg_dump .*--format=custom .*--no-owner .*--no-privileges' "$log" || fail "pg_dump flags missing"
+grep -q 'pg_restore --list' "$log" || fail "Archive list validation missing"
+pass "backup atomically publishes private daily and first-weekly points"
+
+# A later backup in the same week does not replace the first successful weekly point.
+weekly_inode=$(stat -c %i "$weekly/zephyr.dump")
+run_backup "$root" "$case_dir/second.log" FAKE_UTC_TIMESTAMP=20260901T010203Z \
+  FAKE_UTC_WEEK=2026-W35 FAKE_ARCHIVE_PAYLOAD=second > /dev/null
+[ "$(stat -c %i "$weekly/zephyr.dump")" = "$weekly_inode" ] || fail "Weekly point was replaced"
+assert_point_count 2 "$root/daily"
+assert_point_count 1 "$root/weekly"
+pass "weekly point is the first successful backup on any weekday"
+
+# Clean retention removes only whole point directories and keeps newest 7/4.
+case_dir="$TEST_ROOT/retention"; root="$case_dir/backups"; log="$case_dir/docker.log"
+mkdir -p "$root/daily" "$root/weekly"
+for day in 20 21 22 23 24 25 26 27 28; do create_point "$root" daily "202608${day}T010203Z" "d$day"; done
+for week in 30 31 32 33 34 35; do create_point "$root" weekly "2026-W$week" "w$week"; done
+run_backup "$root" "$log" FAKE_UTC_TIMESTAMP=20260830T010203Z FAKE_UTC_WEEK=2026-W35 > /dev/null
+assert_point_count 7 "$root/daily"; assert_point_count 4 "$root/weekly"
+assert_exists "$root/daily/20260830T010203Z/COMPLETE"
+assert_missing "$root/daily/20260820T010203Z"; assert_missing "$root/weekly/2026-W31"
+pass "retention keeps seven daily and four weekly point directories"
+
+# Dump/list failures do not publish or prune.
+for mode in dump list; do
+  case_dir="$TEST_ROOT/fail-$mode"; root="$case_dir/backups"; log="$case_dir/docker.log"
+  mkdir -p "$root/daily" "$root/weekly"
+  for day in 10 11 12 13 14 15 16 17; do create_point "$root" daily "202608${day}T010203Z"; done
+  option=FAKE_DUMP_FAIL=1; [ "$mode" = list ] && option=FAKE_LIST_FAIL=1
+  if run_backup "$root" "$log" "$option" > /dev/null 2>&1; then fail "$mode failure succeeded"; fi
+  assert_point_count 8 "$root/daily"; assert_missing "$root/daily/20260831T010203Z"
+  pass "$mode failure publishes nothing and does not prune"
+done
+
+# Old anomalies are audited only after the new daily/weekly points are kept.
+case_dir="$TEST_ROOT/anomaly"; root="$case_dir/backups"; log="$case_dir/docker.log"
+mkdir -p "$root/daily" "$root/weekly"
+for day in 10 11 12 13 14 15 16 17; do create_point "$root" daily "202608${day}T010203Z"; done
+for week in 30 31 32 33 34; do create_point "$root" weekly "2026-W$week"; done
+create_point "$root" daily 20260818T010203Z corrupt
+printf 'tampered\n' >> "$root/daily/20260818T010203Z/zephyr.dump"
+create_point "$root" daily not-a-date malformed
+create_point "$root" weekly 2026-W29 incomplete
+rm "$root/weekly/2026-W29/COMPLETE"
+mkdir "$root/daily/.tmp-stale"; printf 'review\n' > "$root/daily/.tmp-stale/unexpected"
+if run_backup "$root" "$log" > "$case_dir/output" 2>&1; then fail "Anomalous retention unexpectedly succeeded"; fi
+assert_exists "$root/daily/20260831T010203Z/COMPLETE"
+assert_exists "$root/weekly/2026-W35/COMPLETE"
+assert_exists "$root/daily/20260810T010203Z/COMPLETE"
+assert_exists "$root/weekly/2026-W30/COMPLETE"
+assert_exists "$root/daily/.tmp-stale/unexpected"
+grep -q 'New backup kept; pruning skipped' "$case_dir/output" || fail "Retention review result was unclear"
+pass "old anomalies keep the new backup and preserve everything for review"
+
+# Insecure old point permissions keep today's point but block all pruning.
+case_dir="$TEST_ROOT/permissions"; root="$case_dir/backups"; log="$case_dir/docker.log"
+for day in 10 11 12 13 14 15 16 17; do create_point "$root" daily "202608${day}T010203Z"; done
+chmod 755 "$root/daily/20260817T010203Z"
+chmod 644 "$root/daily/20260816T010203Z/zephyr.dump"
+if run_backup "$root" "$log" > "$case_dir/output" 2>&1; then fail "Insecure retained point unexpectedly passed audit"; fi
+assert_exists "$root/daily/20260831T010203Z/COMPLETE"
+assert_exists "$root/daily/20260810T010203Z/COMPLETE"
+assert_point_count 9 "$root/daily"
+grep -q 'New backup kept; pruning skipped' "$case_dir/output" || fail "Permission drift did not request retention review"
+pass "permission drift keeps the new point and prevents pruning"
+
+# The same private-root lock blocks backup and isolated restore.
+case_dir="$TEST_ROOT/lock"; root="$case_dir/backups"; mkdir -p "$root/daily" "$root/weekly"; chmod 700 "$root"
+create_point "$root" daily 20260831T010203Z
+exec 8> "$root/.maintenance.lock"; flock --exclusive --nonblock 8 || fail "Could not hold maintenance lock"
+if run_backup "$root" "$case_dir/backup.log" > /dev/null 2>&1; then fail "Concurrent backup acquired lock"; fi
+if run_restore "$root" "$case_dir/restore.log" --archive "$root/daily/20260831T010203Z/zephyr.dump" \
+  --target zephyr_restore_lock > /dev/null 2>&1; then fail "Concurrent restore acquired lock"; fi
+flock --unlock 8; exec 8>&-
+[ ! -s "$case_dir/backup.log" ] && [ ! -s "$case_dir/restore.log" ] || fail "Locked command reached Docker"
+pass "shared maintenance lock serializes backup and restore"
+
+# Canonical dedicated backup roots reject symlink traversal before chmod/write.
+case_dir="$TEST_ROOT/symlink"; mkdir -p "$case_dir/real/backups"; chmod 755 "$case_dir/real/backups"; ln -s real "$case_dir/link"
+if run_backup "$case_dir/link/backups" "$case_dir/docker.log" > /dev/null 2>&1; then fail "Symlink root accepted"; fi
+[ "$(stat -c %a "$case_dir/real/backups")" = 755 ] || fail "Rejected root permissions changed"
+root="$TEST_ROOT/root-mode/backups"; mkdir -p "$root/daily" "$root/weekly"; chmod 755 "$root"; chmod 700 "$root/daily" "$root/weekly"
+if run_backup "$root" "$TEST_ROOT/root-mode/docker.log" > /dev/null 2>&1; then fail "Insecure backup root mode accepted"; fi
+[ ! -s "$TEST_ROOT/root-mode/docker.log" ] || fail "Insecure root reached Docker"
+pass "backup root rejects symlink traversal and insecure mode"
+
+# Restore accepts only complete, checksummed points and isolated targets.
+case_dir="$TEST_ROOT/restore"; root="$case_dir/backups"; log="$case_dir/docker.log"
+create_point "$root" daily 20260831T010203Z
+archive="$root/daily/20260831T010203Z/zephyr.dump"
+for target in zephyr unsafe-name other_safe; do
+  if run_restore "$root" "$log" --archive "$archive" --target "$target" > /dev/null 2>&1; then fail "Unsafe target accepted: $target"; fi
+done
+if run_restore "$root" "$log" --archive "$archive" --target zephyr --production > /dev/null 2>&1; then fail "Production option accepted"; fi
+printf 'tampered\n' >> "$archive"
+if run_restore "$root" "$case_dir/corrupt.log" --archive "$archive" --target zephyr_restore_bad > /dev/null 2>&1; then fail "Corrupt point restored"; fi
+[ ! -s "$case_dir/corrupt.log" ] || fail "Corrupt point reached Docker"
+create_point "$root" daily 20260831T010203Z
+pass "restore refuses production, unsafe targets, and corrupt points"
+
+# Failed target inspection is fail-closed before mutation or archive execution.
+log="$case_dir/inspection-failure.log"
+if FAKE_PSQL_FAIL=1 run_restore "$root" "$log" --archive "$archive" \
+  --target zephyr_restore_inspection > "$case_dir/inspection-output" 2>&1; then
+  fail "Failed target inspection was treated as absence"
+fi
+grep -q 'SELECT 1 FROM pg_database' "$log" || fail "Target inspection was not attempted"
+! grep -Eq 'CREATE DATABASE|DROP DATABASE|pg_restore' "$log" \
+  || fail "Failed target inspection reached restore or database mutation"
+grep -q 'Failed to inspect restore target' "$case_dir/inspection-output" \
+  || fail "Target inspection failure was not generic"
+pass "target inspection failure is fail-closed before restore"
+
+# Isolated restore requires explicit replacement and cleans failed targets.
+log="$case_dir/isolated.log"
+run_restore "$root" "$log" --archive "$archive" --target zephyr_restore_test > /dev/null
+grep -q 'CREATE DATABASE "zephyr_restore_test"' "$log" || fail "Isolated target not created"
+grep -q 'pg_restore .*--dbname=zephyr_restore_test .*--exit-on-error' "$log" || fail "Safe restore flags missing"
+! grep -Eqi 'postgres(ql)?://|password=' "$log" || fail "Credential-shaped command content found"
+if FAKE_DATABASE_EXISTS=1 run_restore "$root" "$case_dir/no-replace.log" --archive "$archive" \
+  --target zephyr_restore_existing > /dev/null 2>&1; then fail "Existing target replaced implicitly"; fi
+FAKE_DATABASE_EXISTS=1 run_restore "$root" "$case_dir/replace.log" --archive "$archive" \
+  --target zephyr_restore_existing --replace > /dev/null
+grep -q 'DROP DATABASE "zephyr_restore_existing"' "$case_dir/replace.log" || fail "--replace did not drop target"
+if FAKE_RESTORE_FAIL=1 run_restore "$root" "$case_dir/failure.log" --archive "$archive" \
+  --target zephyr_restore_failure > /dev/null 2>&1; then fail "Failed restore succeeded"; fi
+grep -q 'DROP DATABASE IF EXISTS "zephyr_restore_failure"' "$case_dir/failure.log" || fail "Partial restore not cleaned"
+pass "isolated restore guards replacement and cleans failure"
+
+echo "→ Backup script tests passed ($TESTS_RUN checks)."

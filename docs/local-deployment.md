@@ -63,6 +63,8 @@ Only explicit transient connection codes are retried: refused/reset/aborted conn
 
 Retry logs contain only attempt count, delay, and error code—never the database URL, message, or credentials. A shutdown signal aborts an in-progress backoff instead of scheduling another attempt.
 
+Backup, isolated-only restore testing, manual production-recovery gates, and uninstalled systemd timer templates are documented in [PostgreSQL Backup and Restore Runbook](postgres-backup-restore.md).
+
 ## First Deploy
 
 First deployment to a fresh host sets up the proxy and accessories:
@@ -97,6 +99,9 @@ All `bundle exec kamal ...` commands below assume `KAMAL_HOST` is exported in th
 | `bundle exec kamal app images` | List available release images |
 | `bundle exec kamal redeploy` | Zero-downtime redeploy (pulls new image, replaces containers) |
 | `bundle exec kamal rollback <VERSION>` | Rollback to a specific release (discover versions via `app images`) |
+| `bin/backup-postgres` | Create and retain a validated local logical backup |
+| `bin/restore-postgres --archive <absolute-path>` | Restore into a generated isolated database |
+| `bin/test-backup-restore --archive <absolute-path>` | Manually prove a live isolated restore (not normal CI) |
 
 ## Teardown Guardrails
 
