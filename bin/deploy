@@ -7,6 +7,7 @@ readonly APPROVED_PRIVATE_HOSTNAME=zephyr.home.dicr.tech
 readonly APPROVED_TAILNET_HOST=100.108.58.19
 readonly APPROVED_LAN_HOST=192.168.1.50
 readonly CERTIFICATE_MIN_VALIDITY_SECONDS=$((14 * 24 * 60 * 60))
+readonly REMOTE_TLS_DIRECTORY=/home/sagent/.kamal/proxy/apps-config/zephyr/tls/web
 
 cd "$REPO_ROOT"
 umask 077
@@ -42,7 +43,7 @@ if ! command -v bundle >/dev/null 2>&1 && command -v ruby >/dev/null 2>&1; then
   fi
 fi
 
-for command in bundle cmp grep mktemp openssl stat; do
+for command in bundle cmp grep mktemp openssl ssh stat; do
   if ! command -v "$command" >/dev/null 2>&1; then
     echo "ERROR: Required command not found: $command" >&2
     exit 1
@@ -172,7 +173,33 @@ if [ "$ACTION" = check ]; then
   exit 0
 fi
 
-# When live actions are enabled, run CI with all production secrets and PEMs
-# explicitly removed from its environment before invoking Kamal.
-echo "ERROR: $ACTION is disabled until private TLS publication hardening and renewal are installed." >&2
-exit 1
+kamal_ssh_user=${KAMAL_SSH_USER:-sagent}
+if [ "$kamal_ssh_user" != sagent ]; then
+  echo "ERROR: KAMAL_SSH_USER must be sagent for the MVP TLS directory gate." >&2
+  exit 1
+fi
+if ! ssh -o BatchMode=yes -o ConnectTimeout=10 -- "$kamal_ssh_user@$KAMAL_HOST" \
+  'path=/home/sagent/.kamal/proxy/apps-config/zephyr/tls/web; [ -d "$path" ] && [ ! -L "$path" ] && [ "$(stat -c "%u:%g:%a" -- "$path")" = "1000:1001:2750" ]' \
+  >/dev/null 2>&1; then
+  echo "ERROR: Remote TLS directory failed the required type, owner, group, or mode check." >&2
+  echo "  Expected $REMOTE_TLS_DIRECTORY as uid 1000, gid 1001, mode 2750." >&2
+  exit 1
+fi
+
+echo "→ Running CI without production secrets..."
+env \
+  -u KAMAL_REGISTRY_PASSWORD \
+  -u DATABASE_URL \
+  -u INGEST_API_KEY \
+  -u POSTGRES_PASSWORD \
+  -u ZEPHYR_TLS_CERTIFICATE_PEM \
+  -u ZEPHYR_TLS_PRIVATE_KEY_PEM \
+  bin/ci
+
+if [ "$ACTION" = setup ]; then
+  echo "→ Setting up on $KAMAL_HOST..."
+  bundle exec kamal setup
+else
+  echo "→ Deploying to $KAMAL_HOST..."
+  bundle exec kamal deploy
+fi

@@ -27,8 +27,24 @@ set -euo pipefail
 printf 'bundle %s\n' "$*" >> "${DEPLOY_TEST_LOG:?}"
 case "$*" in
   check|'exec kamal config') exit 0 ;;
+  'exec kamal deploy'|'exec kamal setup')
+    for name in KAMAL_REGISTRY_PASSWORD DATABASE_URL INGEST_API_KEY POSTGRES_PASSWORD \
+      ZEPHYR_TLS_CERTIFICATE_PEM ZEPHYR_TLS_PRIVATE_KEY_PEM; do
+      [ -n "${!name:-}" ] || exit 92
+    done
+    exit 0
+    ;;
   *) exit 91 ;;
 esac
+SH
+cat > "$fake_bin/ssh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'ssh %s\n' "$*" >> "${DEPLOY_TEST_LOG:?}"
+[[ "$*" == *'sagent@100.108.58.19'* ]] || exit 93
+[[ "$*" == *'/home/sagent/.kamal/proxy/apps-config/zephyr/tls/web'* ]] || exit 94
+[[ "$*" == *'1000:1001:2750'* ]] || exit 95
+[ "${DEPLOY_TEST_SSH_STATE:-valid}" = valid ]
 SH
 cat > "$fake_bin/ruby" <<'SH'
 #!/usr/bin/env bash
@@ -42,9 +58,13 @@ SH
 cat > "$repo/bin/ci" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+for name in KAMAL_REGISTRY_PASSWORD DATABASE_URL INGEST_API_KEY POSTGRES_PASSWORD \
+  ZEPHYR_TLS_CERTIFICATE_PEM ZEPHYR_TLS_PRIVATE_KEY_PEM; do
+  [ -z "${!name:-}" ] || exit 96
+done
 printf 'ci\n' >> "${DEPLOY_TEST_LOG:?}"
 SH
-chmod 755 "$fake_bin/git" "$fake_bin/bundle" "$fake_bin/ruby" "$repo/bin/ci"
+chmod 755 "$fake_bin/git" "$fake_bin/bundle" "$fake_bin/ssh" "$fake_bin/ruby" "$repo/bin/ci"
 
 make_certificate() {
   local hostname=$1 days=$2 prefix=$3
@@ -75,7 +95,7 @@ registry_marker=registry-secret-do-not-print
 deploy_log="$TEST_ROOT/deploy.log"
 run_check() {
   local output=$1 certificate=$2 key=$3 hostname=${4:-DEFAULT}
-  local action=${5:-check} kamal_host=${6:-100.108.58.19}
+  local action=${5:-check} kamal_host=${6:-100.108.58.19} ssh_state=${7:-valid}
   local -a command=(
     env -i
     "PATH=$fake_bin:$PATH"
@@ -83,6 +103,7 @@ run_check() {
     "TMPDIR=$TEST_ROOT/tmp"
     "DEPLOY_TEST_LOG=$deploy_log"
     "DEPLOY_TEST_GEM_DIR=$TEST_ROOT/user-gems"
+    "DEPLOY_TEST_SSH_STATE=$ssh_state"
     "KAMAL_HOST=$kamal_host"
     "KAMAL_REGISTRY_PASSWORD=$registry_marker"
     'DATABASE_URL=database-secret-do-not-print'
@@ -152,18 +173,31 @@ if grep -Fq "$registry_marker" "$valid_output" || grep -q 'BEGIN .*PRIVATE KEY' 
 fi
 pass "valid check is non-mutating and secret-safe"
 
-for blocked_action in deploy setup; do
+for bad_state in missing wrong; do
   : > "$deploy_log"
-  output="$TEST_ROOT/blocked-$blocked_action.out"
-  if run_check "$output" "$valid_certificate" "$valid_key" DEFAULT "$blocked_action"; then
-    fail "$blocked_action unexpectedly passed the temporary publication gate"
+  output="$TEST_ROOT/tls-directory-$bad_state.out"
+  if run_check "$output" "$valid_certificate" "$valid_key" DEFAULT deploy 100.108.58.19 "$bad_state"; then
+    fail "$bad_state remote TLS directory unexpectedly passed"
   fi
-  grep -q 'private TLS publication hardening and renewal' "$output" \
-    || fail "$blocked_action failure was not generic"
-  [ "$(cat "$deploy_log")" = $'bundle check\nbundle exec kamal config' ] \
-    || fail "$blocked_action reached CI or a mutating Kamal command"
+  grep -q 'Remote TLS directory failed' "$output" || fail "$bad_state directory failure was unclear"
+  grep -q '^ssh ' "$deploy_log" || fail "$bad_state directory was not inspected"
+  ! grep -Eq '^ci$|bundle exec kamal (deploy|setup)' "$deploy_log" \
+    || fail "$bad_state directory reached CI or Kamal mutation"
 done
-pass "deploy and setup remain disabled before publication hardening"
+pass "missing or wrong remote TLS directory blocks all mutation"
+
+for action in deploy setup; do
+  : > "$deploy_log"
+  output="$TEST_ROOT/success-$action.out"
+  run_check "$output" "$valid_certificate" "$valid_key" DEFAULT "$action"
+  grep -q '^ssh ' "$deploy_log" || fail "$action skipped the remote directory check"
+  grep -q '^ci$' "$deploy_log" || fail "$action skipped secret-scrubbed CI"
+  grep -q "^bundle exec kamal $action$" "$deploy_log" || fail "$action did not invoke normal Kamal flow"
+  if grep -Fq "$registry_marker" "$output" || grep -q 'BEGIN .*PRIVATE KEY' "$output"; then
+    fail "$action leaked secret content"
+  fi
+done
+pass "successful actions scrub CI secrets and retain them for Kamal"
 
 mkdir -p "$TEST_ROOT/user-gems/bin"
 mv "$fake_bin/bundle" "$TEST_ROOT/user-gems/bin/bundle"

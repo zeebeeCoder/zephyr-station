@@ -21,6 +21,7 @@ WAN -> no Zephyr forwarding
 - Ruby/Bundler dependencies are installed with `bundle install`.
 - A reviewed certificate full chain and matching private key cover `zephyr.home.dicr.tech` and have at least 14 days remaining.
 - `.kamal/secrets` is a regular, non-symlink mode-600 file when used.
+- `/home/sagent/.kamal/proxy/apps-config/zephyr/tls/web` already exists on the deployment host as a real non-symlink directory with exact uid 1000, gid 1001, and mode 2750.
 - Private DNS and narrow TCP 443 rules are separately approved before client testing.
 
 The custom certificate must come from the separately reviewed DNS-01 process. This repository does not yet issue or renew it. Kamal's hash-form `proxy.ssl` loads supplied PEM values and does **not** request a public Let's Encrypt challenge.
@@ -103,16 +104,21 @@ Application deployment does not install or invoke the backup timer. Before relia
 
 See [PostgreSQL Backup and Restore Runbook](postgres-backup-restore.md). Missing backup storage is not permission to restore over production or delete PostgreSQL data.
 
-## Deployment is temporarily check-only
+## Deployment
 
-This slice validates configuration but deliberately does not publish custom TLS. Kamal 2.12's default custom-key upload permissions are not acceptable for the private key, and issuance/renewal is not installed. Preserve the currently running `1ffd97a` staging deployment.
+For this single-user MVP, mutating actions first verify over private SSH that `/home/sagent/.kamal/proxy/apps-config/zephyr/tls/web` is a real non-symlink directory with exact uid 1000 (`sagent`), gid 1001 (proxy group), and mode 2750. This restricted parent makes Kamal's mode-0644 custom key file accessible only to `sagent` and the proxy group. Any missing or mismatched attribute stops before CI or Kamal mutation.
+
+For an existing host:
 
 ```bash
 export KAMAL_HOST=100.108.58.19
 bin/deploy check
+bin/deploy
 ```
 
-`bin/deploy` and `bin/deploy setup` run the same preflight and then fail closed before CI or any mutating Kamal command. The later ACME slice must add and prove the restricted host TLS directory/publication hook and renewal path before re-enabling them. When live actions are restored, CI must run with registry, database, ingest, and both TLS PEM secrets explicitly removed from its subprocess environment.
+Use `bin/deploy setup` only for a genuinely fresh host after the same TLS directory has been prepared and reviewed. Before mutation, CI runs with registry, database, ingest, and both TLS PEM secrets explicitly removed from its subprocess environment; the original values remain available only for the subsequent normal Kamal command.
+
+This is deliberately narrow MVP hardening, not certificate lifecycle automation. Automated DNS-01 issuance/renewal, expiry alerting, and tested certificate rotation remain post-MVP work.
 
 ## Verification
 
@@ -136,8 +142,8 @@ All Kamal commands require `KAMAL_HOST` and the custom TLS inputs because render
 | Command | Purpose |
 |---|---|
 | `bin/deploy check` | Validate clean tree, secrets, TLS, bundle, and Kamal config only |
-| `bin/deploy` | Temporarily blocked after preflight; performs no live action |
-| `bin/deploy setup` | Temporarily blocked after preflight; performs no live action |
+| `bin/deploy` | Verify remote TLS directory, run secret-scrubbed CI, deploy existing host |
+| `bin/deploy setup` | Same gates, then fresh-host Kamal setup |
 | `bundle exec kamal details` | Show deployment status |
 | `bundle exec kamal app logs` | Tail application logs |
 | `bundle exec kamal accessory logs postgres` | Tail PostgreSQL logs |
@@ -146,7 +152,7 @@ All Kamal commands require `KAMAL_HOST` and the custom TLS inputs because render
 
 Before a later approved deployment, record the current application version and retain its image. Application rollback must not remove PostgreSQL or its bind mount. Certificate rollback must restore a previously approved certificate/key version through the hardened publication path; never disable hostname validation or open WAN ports as a workaround.
 
-Certificate issuance, restricted-key publication, renewal timers, expiry alerting, and safe proxy reload behavior require a later reviewed implementation and live proof. Until then, live actions remain blocked and this endpoint is not ready for consumer cutover.
+Automated certificate issuance/renewal, expiry alerting, and safe rotation remain post-MVP work. Until those are implemented and proven, operators must monitor expiry and perform separately reviewed certificate replacement before the 14-day deployment floor blocks rollout.
 
 ## Teardown guardrails
 
