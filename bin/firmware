@@ -23,9 +23,12 @@ Usage: bin/firmware <doctor|identify|backup|compile|upload|monitor> [gateway|sta
   upload <role>          Compile, verify a backup exists, then upload
   monitor                Open a 115200-baud serial monitor without toggling reset
 
-Upload requires ZEPHYR_ALLOW_FLASH=1. Override the port with
-ZEPHYR_ESP32_PORT. Set ZEPHYR_CLEAN_BUILD=1 for a clean rebuild. Compile may
-download pinned build dependencies; commands never erase all flash.
+Upload is blocked by default pending firmware hardening issue #2. An explicitly
+reviewed legacy bench upload requires both ZEPHYR_ALLOW_UNHARDENED_FIRMWARE=1
+and ZEPHYR_ALLOW_FLASH=1. The normal just recipes do not set the hardening
+override. Override the port with ZEPHYR_ESP32_PORT. Set ZEPHYR_CLEAN_BUILD=1
+for a clean rebuild. Compile may download pinned build dependencies; commands
+never erase all flash.
 EOF
 }
 
@@ -74,7 +77,10 @@ ensure_grove_lora_library() {
   local current temp
   if [ -d "$GROVE_LORA_DIR/.git" ]; then
     current=$(git -C "$GROVE_LORA_DIR" rev-parse HEAD 2>/dev/null || true)
-    [ "$current" = "$GROVE_LORA_COMMIT" ] && return
+    if [ "$current" = "$GROVE_LORA_COMMIT" ] \
+      && [ -z "$(git -C "$GROVE_LORA_DIR" status --porcelain --untracked-files=all)" ]; then
+      return
+    fi
   fi
 
   require_command git
@@ -112,6 +118,11 @@ require_deployable_config() {
   if grep -Eq 'your-wifi|your-api-key|your-latitude|your-longitude' "$config"; then
     fail "Gateway config contains placeholders; provision it before upload"
   fi
+}
+
+require_hardening_override() {
+  [ "${ZEPHYR_ALLOW_UNHARDENED_FIRMWARE:-}" = 1 ] || fail \
+    "Firmware deployment is blocked pending hardening issue #2: https://github.com/zeebeeCoder/zephyr-station/issues/2"
 }
 
 compile_role() {
@@ -160,6 +171,7 @@ case "$action" in
     else
       echo "Serial port: not connected"
     fi
+    echo "Firmware deployment: BLOCKED by default pending issue #2"
     ;;
   identify)
     require_port
@@ -214,6 +226,8 @@ case "$action" in
     ;;
   upload)
     role=${2:-}
+    sketch_dir "$role" >/dev/null
+    require_hardening_override
     require_port
     [ "${ZEPHYR_ALLOW_FLASH:-}" = 1 ] || fail \
       "Refusing to flash without explicit confirmation: ZEPHYR_ALLOW_FLASH=1 bin/firmware upload $role"

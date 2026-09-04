@@ -11,6 +11,10 @@ a 24-byte weather packet over 868 MHz LoRa; and uses deep sleep between cycles.
 just cook station
 ```
 
+Compilation is supported, but deployment remains default-deny pending
+[firmware hardening issue #2](https://github.com/zeebeeCoder/zephyr-station/issues/2),
+including the station ACK/buffer/idempotency acceptance work.
+
 [`sketch.yaml`](sketch.yaml) pins the ESP32 core and indexed Arduino libraries.
 The build helper downloads the required Seeed Grove LoRa UART library at an
 exact Git commit into the ignored `build/` directory.

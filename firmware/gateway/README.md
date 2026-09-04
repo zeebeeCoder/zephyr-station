@@ -15,7 +15,9 @@ credentials.
 `just cook gateway` creates the ignored file from `config.example.h` when it
 is absent, allowing a clean checkout to compile. Before uploading, fill in the
 Wi-Fi credentials, API key, device ID, and location. The guarded upload command
-rejects placeholder configuration.
+rejects placeholder configuration and remains default-deny pending
+[firmware hardening issue #2](https://github.com/zeebeeCoder/zephyr-station/issues/2).
+Compilation does not imply deployment approval.
 
 ## Build and dependencies
 
