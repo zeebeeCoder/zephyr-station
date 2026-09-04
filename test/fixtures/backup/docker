@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${FAKE_DOCKER_LOG:?FAKE_DOCKER_LOG is required}"
+printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+
+[ "${1:-}" = exec ] || exit 90
+shift
+interactive=0
+if [ "${1:-}" = -i ]; then interactive=1; shift; fi
+[ -n "${1:-}" ] || exit 91
+shift
+command_name=${1:-}
+shift || true
+
+case "$command_name" in
+  pg_dump)
+    [ "${FAKE_DUMP_FAIL:-0}" -eq 0 ] || exit 40
+    [ "${FAKE_DUMP_EMPTY:-0}" -eq 0 ] || exit 0
+    printf 'FAKE_CUSTOM_ARCHIVE\n%s\n' "${FAKE_ARCHIVE_PAYLOAD:-weather-data}"
+    ;;
+  pg_restore)
+    input=$(cat)
+    [[ "$input" == FAKE_CUSTOM_ARCHIVE* ]] || exit 42
+    if [[ " $* " == *" --list "* ]]; then
+      [ "${FAKE_LIST_FAIL:-0}" -eq 0 ] || exit 41
+      printf 'fake archive list\n'
+    else
+      [ "$interactive" -eq 1 ] || exit 43
+      [ "${FAKE_RESTORE_FAIL:-0}" -eq 0 ] || exit 45
+    fi
+    ;;
+  psql)
+    [ "${FAKE_PSQL_FAIL:-0}" -eq 0 ] || exit 46
+    if [[ "$*" == *"SELECT 1 FROM pg_database"* ]] && [ "${FAKE_DATABASE_EXISTS:-0}" -eq 1 ]; then
+      printf '1\n'
+    fi
+    ;;
+  *) exit 92 ;;
+esac

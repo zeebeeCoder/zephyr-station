@@ -8,12 +8,12 @@
  *
  * Hardware:
  * - ESP32 Dev Kit
- * - Grove LoRa E5 Module
+ * - Seeed Grove LoRa Radio 868MHz with UART bridge
  * - Waveshare 2.4" ILI9341 TFT (240x320, SPI) in landscape mode
  * - Push button (or use built-in BOOT button on GPIO0)
  *
  * Wiring:
- *   Grove LoRa E5:
+ *   Seeed Grove LoRa Radio 868MHz (UART bridge):
  *     Yellow (RX) → GPIO17 (ESP32 TX2)
  *     White (TX)  → GPIO16 (ESP32 RX2)
  *     Red (VCC)   → 5V
@@ -34,7 +34,7 @@
  *     Other side → GND
  *
  * Libraries:
- *   - RadioHead by Mike McCauley (Grove LoRa)
+ *   - Seeed Grove LoRa Radio 433MHz/868MHz library (UART RH_RF95 fork)
  *   - Adafruit GFX Library
  *   - Adafruit ILI9341
  *   - ArduinoJson

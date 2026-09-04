@@ -170,8 +170,10 @@ Sensor data ingestion. Requires `x-api-key` header.
 
 ```
 infrastructure/
-├── index.mjs              # Pulumi stack definition
-├── package.json           # Dependencies
+├── cloudflare-dns/
+│   └── README.md          # Tombstone for removed public-origin DNS project
+├── index.mjs              # Legacy AWS Pulumi stack definition
+├── package.json           # Legacy AWS dependencies
 ├── Pulumi.yaml            # Project config
 ├── Pulumi.dev.yaml        # Stack config (secrets)
 ├── src/
@@ -190,6 +192,14 @@ infrastructure/
     └── handler.js         # Bundled output (esbuild)
 ```
 
+## Public origin DNS is disabled
+
+The former public-origin `zephyr-dns` project is removed from active scope; [`cloudflare-dns/README.md`](cloudflare-dns/README.md) is documentation-only and contains no Pulumi manifest, provider, program, dependencies, stack instructions, or apply command. It was never initialized or applied, so there is no DNS stack to destroy.
+
+The approved API uses the host's Tailscale certificate hostname, resolved by household DNS to `192.168.1.50`. No public Zephyr origin record or Cloudflare DNS-01 flow is required. The former public-A project must not be revived for certificate issuance.
+
+The legacy AWS project in this directory remains separate and unchanged. Its preview, `npm run up`, and `npm run destroy` commands never create, update, or delete Cloudflare DNS records.
+
 ## Deployment
 
 ### Prerequisites
@@ -202,8 +212,8 @@ infrastructure/
 ```bash
 cd infrastructure
 
-# Install dependencies
-npm install
+# Install the exact locked dependencies
+npm ci
 
 # Set database URL (one time)
 PULUMI_CONFIG_PASSPHRASE="" pulumi config set --secret databaseUrl 'postgresql://...'
@@ -215,9 +225,9 @@ npm run up
 ### Useful Commands
 ```bash
 npm run build      # Bundle Lambda with esbuild
-npm run preview    # Preview changes
-npm run up         # Build + deploy
-npm run destroy    # Tear down stack
+npm run preview    # Preview the legacy AWS stack only
+npm run up         # Build and apply the legacy AWS stack only; never DNS
+npm run destroy    # Destroy stack-owned legacy AWS resources only; never DNS
 npm run logs       # Stream CloudWatch logs
 ```
 

@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=bin/lib/postgres-backup-common.sh
+source "$SCRIPT_DIR/lib/postgres-backup-common.sh"
+
+umask 077
+export LC_ALL=C
+
+container=${ZEPHYR_POSTGRES_CONTAINER:-zephyr-postgres}
+database_user=${ZEPHYR_POSTGRES_USER:-zephyr}
+admin_database=${ZEPHYR_POSTGRES_ADMIN_DATABASE:-postgres}
+production_database=${ZEPHYR_POSTGRES_DATABASE:-zephyr}
+backup_root=${ZEPHYR_BACKUP_ROOT:-/var/lib/zephyr/backups}
+archive=''
+target=''
+replace=0
+
+usage() {
+  cat <<'USAGE'
+Usage: bin/restore-postgres --archive ABSOLUTE_POINT_PATH [--target zephyr_restore_NAME] [--replace]
+
+The archive path must end in daily/<UTC-stamp>/zephyr.dump or
+weekly/<ISO-week>/zephyr.dump under ZEPHYR_BACKUP_ROOT. Without --target, a
+unique isolated zephyr_restore_* database is used. Production is always refused.
+USAGE
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --archive) [ "$#" -ge 2 ] || zephyr_die "--archive requires a value"; archive=$2; shift 2 ;;
+    --target) [ "$#" -ge 2 ] || zephyr_die "--target requires a value"; target=$2; shift 2 ;;
+    --replace) replace=1; shift ;;
+    --help|-h) usage; exit 0 ;;
+    *) usage >&2; zephyr_die "Unknown argument: $1" ;;
+  esac
+done
+[ -n "$archive" ] || zephyr_die "--archive is required"
+
+if [ -z "$target" ]; then
+  timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+  [[ "$timestamp" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || zephyr_die "date returned an unsafe UTC timestamp"
+  target="zephyr_restore_${timestamp}_$$"
+fi
+
+for command in docker sha256sum realpath flock date mountpoint stat; do zephyr_require_command "$command"; done
+zephyr_validate_container_name "$container"
+zephyr_validate_database_name "$database_user"
+zephyr_validate_database_name "$admin_database"
+zephyr_validate_database_name "$production_database"
+zephyr_validate_database_name "$target"
+zephyr_validate_backup_root "$backup_root"
+
+[ "$target" != "$production_database" ] || zephyr_die "Production restore is not supported; restore to an isolated zephyr_restore_* database"
+[[ "$target" =~ ^zephyr_restore_[A-Za-z0-9_]+$ ]] || zephyr_die "Restore target must start with zephyr_restore_"
+
+zephyr_acquire_maintenance_lock "$backup_root"
+zephyr_validate_recovery_archive "$backup_root" "$archive"
+
+psql_command() {
+  docker exec "$container" psql \
+    --username="$database_user" --dbname="$admin_database" --no-password --no-psqlrc \
+    --set=ON_ERROR_STOP=1 --command="$1"
+}
+
+database_exists() {
+  local result
+  if ! result=$(docker exec "$container" psql \
+    --username="$database_user" --dbname="$admin_database" --no-password --no-psqlrc \
+    --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+    --command="SELECT 1 FROM pg_database WHERE datname = '$1';" 2>/dev/null); then
+    zephyr_die "Failed to inspect restore target"
+  fi
+  case "$result" in
+    '') return 1 ;;
+    1) return 0 ;;
+    *) zephyr_die "Restore target inspection returned an unexpected result" ;;
+  esac
+}
+
+cleanup_database=''
+cleanup() {
+  local status=$?
+  trap - EXIT HUP INT TERM
+  if [ "$status" -ne 0 ] && [ -n "$cleanup_database" ]; then
+    psql_command "DROP DATABASE IF EXISTS \"$cleanup_database\" WITH (FORCE);" >/dev/null \
+      || echo "ERROR: Failed to clean up isolated restore database: $cleanup_database" >&2
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+target_exists=0
+if database_exists "$target"; then target_exists=1; fi
+docker exec -i "$container" pg_restore --list < "$archive" >/dev/null
+
+if [ "$target_exists" -eq 1 ]; then
+  [ "$replace" -eq 1 ] || zephyr_die "Isolated target already exists; pass --replace to replace it"
+  psql_command "DROP DATABASE \"$target\" WITH (FORCE);" >/dev/null
+fi
+
+cleanup_database=$target
+psql_command "CREATE DATABASE \"$target\" WITH TEMPLATE template0 OWNER \"$database_user\";" >/dev/null
+docker exec -i "$container" pg_restore \
+  --username="$database_user" --dbname="$target" --no-password \
+  --no-owner --no-privileges --exit-on-error < "$archive"
+cleanup_database=''
+echo "Restore completed into isolated database: $target"

@@ -9,14 +9,16 @@
 #define WIFI_PASS "your-wifi-password"
 
 // ===== Zephyr Cloud API =====
-#define API_ENDPOINT "https://your-api-id.execute-api.eu-central-1.amazonaws.com/v1/ingest"
+// The endpoint is non-secret; access still requires network reachability and the API key.
+#define API_ENDPOINT "https://omarchy.tail4e6e78.ts.net/v1/ingest"
 #define API_KEY "your-api-key"
 #define DEVICE_ID "mstation"
 
 // ===== NTP Time Server =====
 #define NTP_SERVER "pool.ntp.org"
-#define GMT_OFFSET_SEC 3600       // Adjust for your timezone (e.g., 3600 for GMT+1)
-#define DAYLIGHT_OFFSET_SEC 3600  // Daylight saving offset (3600 for summer/DST)
+// Keep system time in UTC because gateway timestamps are emitted with a trailing Z.
+#define GMT_OFFSET_SEC 0
+#define DAYLIGHT_OFFSET_SEC 0
 
 // ===== Weather Forecast (Open-Meteo) =====
 #define FORECAST_LAT "your-latitude"

@@ -12,23 +12,30 @@ Zephyr ingestion API over Wi-Fi.
 during migration, but it is intentionally ignored by Git because it contains
 credentials.
 
-For a fresh checkout:
+`just cook gateway` creates the ignored file from `config.example.h` when it
+is absent, allowing a clean checkout to compile. Before uploading, fill in the
+Wi-Fi credentials, API key, device ID, and location. The guarded upload command
+rejects placeholder configuration.
+
+## Build and dependencies
 
 ```sh
-cp firmware/gateway/config.example.h firmware/gateway/config.h
+just cook gateway
 ```
 
-Then fill in the Wi-Fi credentials, API endpoint/key, device ID, and location.
+[`sketch.yaml`](sketch.yaml) pins the ESP32 core and indexed Arduino libraries.
+The build helper downloads the required Seeed Grove LoRa UART library at an
+exact Git commit into the ignored `build/` directory.
 
-## Arduino libraries
+The radio dependency is **Seeed Studio's Grove - LoRa Radio 433MHz/868MHz
+library**, not standard RadioHead and not the Wio-E5 AT-command library. This
+Grove module exposes an SX127x radio through its UART-to-SPI bridge, and Seeed's
+fork provides the templated `RH_RF95<HardwareSerial>` driver used by this
+sketch.
 
-- RadioHead
-- Adafruit GFX Library
-- Adafruit ILI9341
-- ArduinoJson
-
-Wi-Fi, HTTP, secure-client, SPI, and time support are provided by the ESP32
-Arduino core.
+Other direct dependencies are Adafruit GFX, Adafruit ILI9341, and ArduinoJson.
+Wi-Fi, HTTP, secure-client, SPI, and time support come from the ESP32 Arduino
+core.
 
 ## Migration
 

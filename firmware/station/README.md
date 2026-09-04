@@ -5,14 +5,25 @@ Main sketch: [`station.ino`](station.ino)
 The outdoor ESP32 reads the BME680, PMS7003, anemometer, and INA219; transmits
 a 24-byte weather packet over 868 MHz LoRa; and uses deep sleep between cycles.
 
-## Arduino libraries
+## Build and dependencies
 
-- Adafruit Unified Sensor
-- Adafruit BME680 Library
-- Adafruit INA219
-- RadioHead
+```sh
+just cook station
+```
 
-The sketch includes its hardware wiring and pin assignments in the header.
+[`sketch.yaml`](sketch.yaml) pins the ESP32 core and indexed Arduino libraries.
+The build helper downloads the required Seeed Grove LoRa UART library at an
+exact Git commit into the ignored `build/` directory.
+
+The radio dependency is **Seeed Studio's Grove - LoRa Radio 433MHz/868MHz
+library**, not standard RadioHead and not the Wio-E5 AT-command library. This
+Grove module exposes an SX127x radio through its UART-to-SPI bridge, and Seeed's
+fork provides the templated `RH_RF95<HardwareSerial>` driver used by the
+sketch.
+
+Other direct dependencies are Adafruit Unified Sensor, Adafruit BME680, and
+Adafruit INA219. The sketch includes its hardware wiring and pin assignments
+in the header.
 
 ## Migration
 

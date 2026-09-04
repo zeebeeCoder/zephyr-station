@@ -1,0 +1,244 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+readonly PORT_DEFAULT=/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
+readonly PORT=${ZEPHYR_ESP32_PORT:-$PORT_DEFAULT}
+readonly FQBN='esp32:esp32:esp32:UploadSpeed=115200,FlashMode=dio,FlashFreq=80,FlashSize=4M,PartitionScheme=default,EraseFlash=none'
+readonly BUILD_PROFILE=esp32
+readonly BACKUP_DIR=${ZEPHYR_ESP32_BACKUP_DIR:-$HOME/.local/state/zephyr-station/firmware-backups}
+readonly GROVE_LORA_URL=https://github.com/Seeed-Studio/Grove_LoRa_433MHz_and_915MHz_RF.git
+readonly GROVE_LORA_COMMIT=f82d4dc943e8c91fd80ecef5fa5f1a625466ca0d
+readonly GROVE_LORA_DIR="$REPO_ROOT/build/firmware/dependencies/grove-lora"
+
+usage() {
+  cat <<'EOF'
+Usage: bin/firmware <doctor|identify|backup|compile|upload|monitor> [gateway|station]
+
+  doctor                Check the local toolchain, source, and serial access
+  identify              Read chip and flash identity without changing flash
+  backup                Create a private, byte-for-byte 4 MiB flash backup
+  compile <role>         Compile firmware/gateway or firmware/station
+  upload <role>          Compile, verify a backup exists, then upload
+  monitor                Open a 115200-baud serial monitor without toggling reset
+
+Upload requires ZEPHYR_ALLOW_FLASH=1. Override the port with
+ZEPHYR_ESP32_PORT. Set ZEPHYR_CLEAN_BUILD=1 for a clean rebuild. Compile may
+download pinned build dependencies; commands never erase all flash.
+EOF
+}
+
+fail() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || fail "Required command not found: $1"
+}
+
+require_port() {
+  [ -e "$PORT" ] || fail "ESP32 serial port not found: $PORT"
+  [ -r "$PORT" ] && [ -w "$PORT" ] || fail \
+    "No serial access to $PORT. Run 'newgrp uucp' or log out and back in."
+}
+
+esptool_path() {
+  local tool
+  tool=$(find "$HOME/.arduino15/packages/esp32/tools/esptool_py" -mindepth 2 \
+    -maxdepth 2 -type f -name esptool -print 2>/dev/null | sort -V | tail -n 1)
+  [ -n "$tool" ] && [ -x "$tool" ] || fail "esptool not found in the installed ESP32 core"
+  printf '%s\n' "$tool"
+}
+
+sketch_dir() {
+  local role=${1:-}
+  case "$role" in
+    gateway|station) printf '%s/firmware/%s\n' "$REPO_ROOT" "$role" ;;
+    *) fail "Role must be 'gateway' or 'station'" ;;
+  esac
+}
+
+require_sketch() {
+  local role=$1
+  local directory
+  directory=$(sketch_dir "$role")
+  [ -f "$directory/$role.ino" ] || fail \
+    "Missing $directory/$role.ino. This checkout does not yet contain the firmware source."
+  [ -f "$directory/sketch.yaml" ] || fail \
+    "Missing $directory/sketch.yaml build profile."
+}
+
+ensure_grove_lora_library() {
+  local current temp
+  if [ -d "$GROVE_LORA_DIR/.git" ]; then
+    current=$(git -C "$GROVE_LORA_DIR" rev-parse HEAD 2>/dev/null || true)
+    [ "$current" = "$GROVE_LORA_COMMIT" ] && return
+  fi
+
+  require_command git
+  mkdir -p "$(dirname "$GROVE_LORA_DIR")"
+  temp="$GROVE_LORA_DIR.tmp.$$"
+  rm -rf "$temp"
+  git init --quiet "$temp"
+  git -C "$temp" remote add origin "$GROVE_LORA_URL"
+  if ! git -C "$temp" fetch --quiet --depth 1 origin "$GROVE_LORA_COMMIT"; then
+    rm -rf "$temp"
+    fail "Could not download the pinned Seeed Grove LoRa library"
+  fi
+  git -C "$temp" checkout --quiet --detach FETCH_HEAD
+  rm -rf "$GROVE_LORA_DIR"
+  mv "$temp" "$GROVE_LORA_DIR"
+  echo "Grove LoRa dependency: $GROVE_LORA_COMMIT"
+}
+
+ensure_local_config() {
+  local role=$1 directory
+  [ "$role" = gateway ] || return 0
+  directory=$(sketch_dir "$role")
+  if [ ! -f "$directory/config.h" ]; then
+    cp "$directory/config.example.h" "$directory/config.h"
+    echo "Created ignored $directory/config.h from the placeholder template."
+    echo "Configure it before uploading to hardware."
+  fi
+}
+
+require_deployable_config() {
+  local role=$1 config
+  [ "$role" = gateway ] || return 0
+  config="$(sketch_dir "$role")/config.h"
+  [ -f "$config" ] || fail "Missing $config"
+  if grep -Eq 'your-wifi|your-api-key|your-latitude|your-longitude' "$config"; then
+    fail "Gateway config contains placeholders; provision it before upload"
+  fi
+}
+
+compile_role() {
+  local role=$1
+  local directory build_path
+  require_command arduino-cli
+  require_sketch "$role"
+  ensure_grove_lora_library
+  ensure_local_config "$role"
+  directory=$(sketch_dir "$role")
+  build_path="$REPO_ROOT/build/firmware/$role"
+  mkdir -p "$build_path"
+  if [ "${ZEPHYR_CLEAN_BUILD:-}" = 1 ]; then
+    arduino-cli compile --clean --warnings all --profile "$BUILD_PROFILE" \
+      --build-path "$build_path" "$directory"
+  else
+    arduino-cli compile --warnings all --profile "$BUILD_PROFILE" \
+      --build-path "$build_path" "$directory"
+  fi
+}
+
+action=${1:-}
+case "$action" in
+  doctor)
+    require_command arduino-cli
+    echo "Arduino CLI: $(arduino-cli version)"
+    if arduino-cli core list | grep -q '^esp32:esp32[[:space:]]'; then
+      arduino-cli core list | grep '^esp32:esp32[[:space:]]'
+    else
+      fail "ESP32 Arduino core is not installed"
+    fi
+    for role in gateway station; do
+      if [ -f "$(sketch_dir "$role")/$role.ino" ]; then
+        echo "$role source: present"
+      else
+        echo "$role source: MISSING ($(sketch_dir "$role")/$role.ino)"
+      fi
+    done
+    if [ -e "$PORT" ]; then
+      echo "Serial port: $PORT"
+      if [ -r "$PORT" ] && [ -w "$PORT" ]; then
+        echo "Serial access: ready"
+      else
+        echo "Serial access: blocked in this login session (re-login to activate uucp)"
+      fi
+    else
+      echo "Serial port: not connected"
+    fi
+    ;;
+  identify)
+    require_port
+    tool=$(esptool_path)
+    "$tool" --chip esp32 --port "$PORT" --baud 115200 chip-id
+    "$tool" --chip esp32 --port "$PORT" --baud 115200 flash-id
+    ;;
+  backup)
+    require_port
+    require_command sha256sum
+    tool=$(esptool_path)
+    install -d -m 700 "$BACKUP_DIR"
+    stamp=$(date -u +%Y%m%dT%H%M%SZ)
+    backup="$BACKUP_DIR/esp32-$stamp-4MB.bin"
+    work=$(mktemp -d "$BACKUP_DIR/.chunks.XXXXXX")
+    trap 'rm -rf "${work:-}"' EXIT
+    chmod 700 "$work"
+    chunk=$((0x10000))
+    count=64
+    for ((i=0; i<count; i++)); do
+      offset=$((i * chunk))
+      printf -v part '%s/%03d.bin' "$work" "$i"
+      complete=0
+      for _ in 1 2 3; do
+        if "$tool" --silent --chip esp32 --port "$PORT" --baud 115200 \
+          read-flash "$offset" "$chunk" "$part" --no-progress \
+          >"$work/read.log" 2>&1 \
+          && [ "$(stat -c %s "$part")" -eq "$chunk" ]; then
+          complete=1
+          break
+        fi
+        rm -f "$part"
+        sleep 1
+      done
+      [ "$complete" -eq 1 ] || fail "Could not read flash at offset $(printf '0x%06x' "$offset")"
+      chmod 600 "$part"
+      printf '\rFlash backup: %d/%d chunks (%d%%)' "$((i + 1))" "$count" "$(((i + 1) * 100 / count))"
+    done
+    printf '\n'
+    cat "$work"/[0-9][0-9][0-9].bin > "$backup"
+    chmod 600 "$backup"
+    [ "$(stat -c %s "$backup")" -eq $((0x400000)) ] || fail "Backup has the wrong size"
+    sha256sum "$backup" > "$backup.sha256"
+    chmod 600 "$backup.sha256"
+    printf 'latest_file=%s\n' "$(basename "$backup")" > "$BACKUP_DIR/latest"
+    chmod 600 "$BACKUP_DIR/latest"
+    echo "Backup: $backup"
+    cat "$backup.sha256"
+    ;;
+  compile)
+    compile_role "${2:-}"
+    ;;
+  upload)
+    role=${2:-}
+    require_port
+    [ "${ZEPHYR_ALLOW_FLASH:-}" = 1 ] || fail \
+      "Refusing to flash without explicit confirmation: ZEPHYR_ALLOW_FLASH=1 bin/firmware upload $role"
+    [ -d "$BACKUP_DIR" ] || fail "No flash backup directory; run bin/firmware backup first"
+    latest=$(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'esp32-*-4MB.bin' \
+      -size 4194304c -print 2>/dev/null | sort | tail -n 1)
+    [ -n "$latest" ] && [ -f "$latest.sha256" ] || fail \
+      "No complete checksummed flash backup found; run bin/firmware backup first"
+    sha256sum --check --status "$latest.sha256" || fail "Latest flash backup checksum failed"
+    require_deployable_config "$role"
+    compile_role "$role"
+    arduino-cli upload --verify --fqbn "$FQBN" --port "$PORT" \
+      --build-path "$REPO_ROOT/build/firmware/$role" "$(sketch_dir "$role")"
+    ;;
+  monitor)
+    require_command arduino-cli
+    require_port
+    arduino-cli monitor --port "$PORT" --timestamp \
+      --config baudrate=115200,dtr=off,rts=off
+    ;;
+  -h|--help|help)
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 1
+    ;;
+esac

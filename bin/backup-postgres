@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=bin/lib/postgres-backup-common.sh
+source "$SCRIPT_DIR/lib/postgres-backup-common.sh"
+
+[ "$#" -eq 0 ] || zephyr_die "Usage: bin/backup-postgres"
+umask 077
+export LC_ALL=C
+
+container=${ZEPHYR_POSTGRES_CONTAINER:-zephyr-postgres}
+database=${ZEPHYR_POSTGRES_DATABASE:-zephyr}
+database_user=${ZEPHYR_POSTGRES_USER:-zephyr}
+backup_root=${ZEPHYR_BACKUP_ROOT:-/var/lib/zephyr/backups}
+
+for command in docker sha256sum mktemp date realpath flock mountpoint stat; do zephyr_require_command "$command"; done
+zephyr_validate_container_name "$container"
+zephyr_validate_database_name "$database"
+zephyr_validate_database_name "$database_user"
+zephyr_validate_backup_root "$backup_root"
+
+[ ! -L "$backup_root" ] || zephyr_die "Backup root must not be a symlink"
+if [ -e "$backup_root" ]; then
+  [ -d "$backup_root" ] && [ ! -L "$backup_root" ] || zephyr_die "Backup root must be a real directory"
+else
+  mkdir -m 700 -- "$backup_root"
+fi
+zephyr_acquire_maintenance_lock "$backup_root"
+for directory in "$backup_root/daily" "$backup_root/weekly"; do
+  if [ -e "$directory" ]; then
+    [ -d "$directory" ] && [ ! -L "$directory" ] || zephyr_die "Backup directories must be real directories"
+    [ "$(stat -c %a "$directory")" = 700 ] || zephyr_die "Backup directories must be mode 700"
+  else
+    mkdir -m 700 -- "$directory"
+  fi
+done
+
+utc_timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+utc_week=$(date -u +%G-W%V)
+zephyr_validate_point_name daily "$utc_timestamp"
+zephyr_validate_point_name weekly "$utc_week"
+
+daily_path="$backup_root/daily/$utc_timestamp"
+weekly_path="$backup_root/weekly/$utc_week"
+[ ! -e "$daily_path" ] && [ ! -L "$daily_path" ] || zephyr_die "Daily recovery point already exists: $utc_timestamp"
+
+temp_point=''
+cleanup() {
+  local status=$?
+  trap - EXIT HUP INT TERM
+  if [ -n "$temp_point" ] && ! mountpoint -q -- "$temp_point"; then
+    rm -f -- "$temp_point/zephyr.dump" "$temp_point/SHA256SUMS" "$temp_point/COMPLETE" 2>/dev/null || true
+    rmdir -- "$temp_point" 2>/dev/null || true
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+write_checksum() {
+  local archive=$1 output=$2 digest
+  digest=$(sha256sum "$archive"); digest=${digest%% *}
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || zephyr_die "sha256sum returned an invalid digest"
+  printf '%s  zephyr.dump\n' "$digest" > "$output"
+  chmod 600 "$output"
+}
+
+publish_daily() {
+  temp_point=$(mktemp -d "$backup_root/daily/.tmp-${utc_timestamp}.XXXXXX")
+  chmod 700 "$temp_point"
+  docker exec "$container" pg_dump \
+    --username="$database_user" \
+    --dbname="$database" \
+    --no-password \
+    --format=custom \
+    --no-owner \
+    --no-privileges > "$temp_point/zephyr.dump"
+  chmod 600 "$temp_point/zephyr.dump"
+  [ -s "$temp_point/zephyr.dump" ] || zephyr_die "pg_dump produced an empty archive"
+  docker exec -i "$container" pg_restore --list < "$temp_point/zephyr.dump" >/dev/null
+  write_checksum "$temp_point/zephyr.dump" "$temp_point/SHA256SUMS"
+  : > "$temp_point/COMPLETE"
+  chmod 600 "$temp_point/COMPLETE"
+  mv -T -- "$temp_point" "$daily_path"
+  temp_point=''
+}
+
+publish_weekly_if_missing() {
+  [ ! -e "$weekly_path" ] && [ ! -L "$weekly_path" ] || return 0
+  temp_point=$(mktemp -d "$backup_root/weekly/.tmp-${utc_week}.XXXXXX")
+  chmod 700 "$temp_point"
+  ln "$daily_path/zephyr.dump" "$temp_point/zephyr.dump"
+  cp "$daily_path/SHA256SUMS" "$temp_point/SHA256SUMS"
+  chmod 600 "$temp_point/zephyr.dump" "$temp_point/SHA256SUMS"
+  : > "$temp_point/COMPLETE"
+  chmod 600 "$temp_point/COMPLETE"
+  mv -T -- "$temp_point" "$weekly_path"
+  temp_point=''
+}
+
+# Publish today's valid point before old recovery points are audited.
+publish_daily
+publish_weekly_if_missing
+echo "Daily backup published: $daily_path"
+echo "Weekly recovery point: $weekly_path"
+
+audit_failed=0
+audit_family() {
+  local family=$1 directory="$backup_root/$1" point name
+  while IFS= read -r -d '' point; do
+    name=$(basename "$point")
+    if ! (
+      zephyr_validate_point_name "$family" "$name"
+      zephyr_validate_point_files "$point"
+      docker exec -i "$container" pg_restore --list < "$point/zephyr.dump" >/dev/null
+    ); then
+      echo "ERROR: Retention review required for $point" >&2
+      audit_failed=1
+    fi
+  done < <(find "$directory" -mindepth 1 -maxdepth 1 -print0)
+}
+audit_family daily
+audit_family weekly
+
+if [ "$audit_failed" -ne 0 ]; then
+  echo "ERROR: New backup kept; pruning skipped because retained recovery points need review" >&2
+  exit 2
+fi
+
+prune_family() {
+  local directory=$1 keep=$2 count=0 name point
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    count=$((count + 1))
+    if [ "$count" -gt "$keep" ]; then
+      point="$directory/$name"
+      rm -f -- "$point/zephyr.dump" "$point/SHA256SUMS" "$point/COMPLETE"
+      rmdir -- "$point"
+    fi
+  done < <(find "$directory" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | LC_ALL=C sort -r)
+}
+prune_family "$backup_root/daily" 7
+prune_family "$backup_root/weekly" 4

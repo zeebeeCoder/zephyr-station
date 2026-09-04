@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "$*" in
+  '-u +%Y%m%dT%H%M%SZ') printf '%s\n' "${FAKE_UTC_TIMESTAMP:-20260831T010203Z}" ;;
+  '-u +%G-W%V') printf '%s\n' "${FAKE_UTC_WEEK:-2026-W35}" ;;
+  *) exec /usr/bin/date "$@" ;;
+esac

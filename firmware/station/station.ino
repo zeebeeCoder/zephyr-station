@@ -9,7 +9,7 @@
  * - PMS7003 (Particulate Matter PM1.0, PM2.5, PM10)
  * - Anemometer (Wind Speed)
  * - INA219 (Battery/Power Monitoring)
- * - Grove LoRa E5 Module (Long-range transmission)
+ * - Seeed Grove LoRa Radio 868MHz with UART bridge (long-range transmission)
  * - Solar Panel + TP4056/BMS (Charging)
  *
  * Wiring:
@@ -38,7 +38,7 @@
  *     Green wire → GND
  *     Red wire → GPIO4 (with internal pull-up)
  *
- *   Grove LoRa E5:
+ *   Seeed Grove LoRa Radio 868MHz (UART bridge):
  *     Yellow (RX) → GPIO17 (ESP32 TX2)
  *     White (TX) → GPIO16 (ESP32 RX2)
  *     Red (VCC) → 5V
@@ -47,7 +47,7 @@
  * Libraries:
  *   - Adafruit BME680 Library
  *   - Adafruit INA219
- *   - RadioHead by Mike McCauley
+ *   - Seeed Grove LoRa Radio 433MHz/868MHz library (UART RH_RF95 fork)
  */
 
 #include <Wire.h>
@@ -115,7 +115,7 @@
 #define DEEP_SLEEP_CURRENT_MA 0.01    // ~10µA
 
 // INA219 address (adjust if using different A0/A1 config)
-#define INA219_ADDRESS 0x45
+#define INA219_I2C_ADDRESS 0x45
 
 // Sea level pressure for altitude (adjust for your location)
 #define SEALEVELPRESSURE_HPA 1013.25
@@ -131,7 +131,7 @@ RTC_DATA_ATTR uint8_t listenCheckCount = 0;  // Count listen checks between full
 // ===== GLOBAL OBJECTS =====
 TwoWire I2C_BME = TwoWire(1);  // Second I2C bus for BME680
 Adafruit_BME680 bme(&I2C_BME);
-Adafruit_INA219 ina219(INA219_ADDRESS);
+Adafruit_INA219 ina219(INA219_I2C_ADDRESS);
 HardwareSerial pmsSerial(1);   // UART1 for PMS7003
 HardwareSerial loraSerial(2);  // UART2 for LoRa
 RH_RF95 rf95(loraSerial);
@@ -208,11 +208,11 @@ bool initINA219() {
   Serial.print("  INA219... ");
 
   if (!ina219.begin()) {
-    Serial.printf("NOT FOUND (addr 0x%02X)\n", INA219_ADDRESS);
+    Serial.printf("NOT FOUND (addr 0x%02X)\n", INA219_I2C_ADDRESS);
     return false;
   }
 
-  Serial.printf("OK (addr 0x%02X)\n", INA219_ADDRESS);
+  Serial.printf("OK (addr 0x%02X)\n", INA219_I2C_ADDRESS);
   return true;
 }
 

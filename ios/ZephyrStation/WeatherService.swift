@@ -2,22 +2,24 @@ import Foundation
 
 /// Fetches live weather data from the Zephyr API
 class WeatherService {
-    private let apiURL = URL(string: "https://yvsssrfmu6.execute-api.eu-central-1.amazonaws.com/v1/widget?device_id=mstation")!
+    private let apiBaseURL = URL(string: "https://omarchy.tail4e6e78.ts.net/v1")!
 
     func fetchWeather() async throws -> WeatherResponse {
-        let (data, _) = try await URLSession.shared.data(from: apiURL)
+        let url = endpointURL(path: "widget", queryItems: [
+            URLQueryItem(name: "device_id", value: "mstation"),
+        ])
+        let (data, _) = try await URLSession.shared.data(from: url)
         return try JSONDecoder().decode(WeatherResponse.self, from: data)
     }
 
     func fetchHistory(metric: HistoryMetric, range: HistoryRange) async throws -> HistoryResponse {
-        var components = URLComponents(string: "https://yvsssrfmu6.execute-api.eu-central-1.amazonaws.com/v1/history")!
-        components.queryItems = [
+        let url = endpointURL(path: "history", queryItems: [
             URLQueryItem(name: "device_id", value: "mstation"),
             URLQueryItem(name: "metric", value: metric.rawValue),
             URLQueryItem(name: "range", value: range.rawValue),
-        ]
+        ])
 
-        let (data, _) = try await URLSession.shared.data(from: components.url!)
+        let (data, _) = try await URLSession.shared.data(from: url)
 
         let decoder = JSONDecoder()
         let formatter = DateFormatter()
@@ -25,5 +27,14 @@ class WeatherService {
         formatter.timeZone = TimeZone.current
         decoder.dateDecodingStrategy = .formatted(formatter)
         return try decoder.decode(HistoryResponse.self, from: data)
+    }
+
+    private func endpointURL(path: String, queryItems: [URLQueryItem]) -> URL {
+        var components = URLComponents(
+            url: apiBaseURL.appendingPathComponent(path),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = queryItems
+        return components.url!
     }
 }

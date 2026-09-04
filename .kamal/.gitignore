@@ -1,0 +1,4 @@
+# Ignore all secrets files except the example template
+*
+!.gitignore
+!secrets.example

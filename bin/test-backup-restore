@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=bin/lib/postgres-backup-common.sh
+source "$SCRIPT_DIR/lib/postgres-backup-common.sh"
+
+umask 077
+export LC_ALL=C
+
+container=${ZEPHYR_POSTGRES_CONTAINER:-zephyr-postgres}
+database_user=${ZEPHYR_POSTGRES_USER:-zephyr}
+admin_database=${ZEPHYR_POSTGRES_ADMIN_DATABASE:-postgres}
+source_database=${ZEPHYR_POSTGRES_DATABASE:-zephyr}
+archive=''
+
+usage() {
+  echo "Usage: bin/test-backup-restore --archive ABSOLUTE_PATH"
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --archive)
+      [ "$#" -ge 2 ] || zephyr_die "--archive requires a value"
+      archive=$2
+      shift 2
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      usage >&2
+      zephyr_die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+[ -n "$archive" ] || zephyr_die "--archive is required"
+zephyr_require_command docker
+zephyr_require_command cmp
+zephyr_require_command mktemp
+zephyr_validate_container_name "$container"
+zephyr_validate_database_name "$database_user"
+zephyr_validate_database_name "$admin_database"
+zephyr_validate_database_name "$source_database"
+zephyr_validate_absolute_path "$archive"
+
+timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+[[ "$timestamp" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] \
+  || zephyr_die "date returned an unsafe UTC timestamp"
+target_database="zephyr_restore_test_${timestamp}_$$"
+zephyr_validate_database_name "$target_database"
+
+temp_parent=${TMPDIR:-/tmp}
+zephyr_validate_absolute_path "$temp_parent"
+temp_dir=$(mktemp -d "$temp_parent/zephyr-restore-test.XXXXXX")
+source_before="$temp_dir/source-before.txt"
+source_after="$temp_dir/source-after.txt"
+restored="$temp_dir/restored.txt"
+target_may_exist=0
+
+psql_admin() {
+  local sql=$1
+  docker exec "$container" psql \
+    --username="$database_user" \
+    --dbname="$admin_database" \
+    --no-password \
+    --no-psqlrc \
+    --set=ON_ERROR_STOP=1 \
+    --command="$sql"
+}
+
+cleanup() {
+  local status=$?
+  trap - EXIT HUP INT TERM
+
+  if [ "$target_may_exist" -eq 1 ]; then
+    if ! psql_admin "DROP DATABASE IF EXISTS \"$target_database\" WITH (FORCE);" >/dev/null; then
+      echo "ERROR: Failed to drop isolated restore-test database: $target_database" >&2
+      status=1
+    fi
+  fi
+  rm -rf -- "$temp_dir"
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+fingerprint_database() {
+  local database=$1
+  docker exec -i "$container" psql \
+    --username="$database_user" \
+    --dbname="$database" \
+    --no-password \
+    --no-psqlrc \
+    --tuples-only \
+    --no-align \
+    --field-separator='|' \
+    --set=ON_ERROR_STOP=1 <<'SQL'
+SELECT 'devices', COUNT(*)::text FROM devices;
+SELECT 'readings', COUNT(*)::text,
+       COALESCE(MIN(recorded_at)::text, ''),
+       COALESCE(MAX(recorded_at)::text, '')
+FROM readings;
+SELECT 'latest', device_id, recorded_at::text,
+       COALESCE(temperature_c::text, ''),
+       COALESCE(humidity_pct::text, '')
+FROM readings
+ORDER BY recorded_at DESC, device_id ASC
+LIMIT 1;
+WITH anchor AS (SELECT MAX(recorded_at) AS latest FROM readings)
+SELECT 'history24h', COUNT(*)::text,
+       COALESCE(AVG(temperature_c)::numeric(12,3)::text, '')
+FROM readings CROSS JOIN anchor
+WHERE recorded_at > anchor.latest - INTERVAL '24 hours';
+SQL
+}
+
+fingerprint_database "$source_database" > "$source_before"
+target_may_exist=1
+"$SCRIPT_DIR/restore-postgres" --archive "$archive" --target "$target_database" >/dev/null
+fingerprint_database "$target_database" > "$restored"
+fingerprint_database "$source_database" > "$source_after"
+
+cmp -s "$source_before" "$source_after" \
+  || zephyr_die "Source database changed during restore test; comparison is inconclusive"
+cmp -s "$source_before" "$restored" \
+  || zephyr_die "Restored database does not match source fingerprints"
+
+echo "Backup restore test passed: counts, timestamp bounds, latest reading, and 24h history match"

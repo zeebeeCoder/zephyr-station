@@ -1,0 +1,31 @@
+{
+  "name": "zephyr-backend",
+  "version": "0.3.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsx watch src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest run test/unit",
+    "test:integration": "vitest run test/integration",
+    "test": "vitest run",
+    "migrate": "npx tsx src/db/migrate.ts"
+  },
+  "dependencies": {
+    "@fastify/helmet": "^13.1.1",
+    "@fastify/rate-limit": "^11.2.0",
+    "fastify": "^5.2.0",
+    "postgres": "^3.4.7",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
