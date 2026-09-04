@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/zephyr-deploy-tests.XXXXXX")
+readonly SYSTEM_PATH=/usr/local/bin:/usr/bin:/bin
 TESTS_RUN=0
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
 
@@ -98,7 +99,7 @@ run_check() {
   local action=${5:-check} kamal_host=${6:-100.108.58.19} ssh_state=${7:-valid}
   local -a command=(
     env -i
-    "PATH=$fake_bin:$PATH"
+    "PATH=$fake_bin:$SYSTEM_PATH"
     "HOME=$TEST_ROOT"
     "TMPDIR=$TEST_ROOT/tmp"
     "DEPLOY_TEST_LOG=$deploy_log"
@@ -199,14 +200,21 @@ for action in deploy setup; do
 done
 pass "successful actions scrub CI secrets and retain them for Kamal"
 
-mkdir -p "$TEST_ROOT/user-gems/bin"
+mkdir -p "$TEST_ROOT/user-gems/bin" "$TEST_ROOT/external/bin"
+cat > "$TEST_ROOT/external/bin/bundle" <<'SH'
+#!/usr/bin/env bash
+printf 'external bundle must not run\n' >> "${DEPLOY_TEST_LOG:?}"
+exit 97
+SH
+chmod 755 "$TEST_ROOT/external/bin/bundle"
 mv "$fake_bin/bundle" "$TEST_ROOT/user-gems/bin/bundle"
 : > "$deploy_log"
-run_check "$TEST_ROOT/user-gem-bundle.out" "$valid_certificate" "$valid_key"
+PATH="$TEST_ROOT/external/bin:$PATH" \
+  run_check "$TEST_ROOT/user-gem-bundle.out" "$valid_certificate" "$valid_key"
 [ "$(cat "$deploy_log")" = $'bundle check\nbundle exec kamal config' ] \
-  || fail "User-gem Bundler was not discovered"
+  || fail "Caller PATH interfered with user-gem Bundler discovery"
 mv "$TEST_ROOT/user-gems/bin/bundle" "$fake_bin/bundle"
-pass "preflight discovers Bundler in the Ruby user gem bin"
+pass "isolated PATH discovers user-gem Bundler and ignores caller bundle"
 
 node - "$REPO_ROOT/config/deploy.yml" <<'NODE'
 const fs = require('node:fs');
