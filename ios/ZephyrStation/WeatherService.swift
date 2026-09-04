@@ -2,7 +2,7 @@ import Foundation
 
 /// Fetches live weather data from the Zephyr API
 class WeatherService {
-    private let apiBaseURL = URL(string: "https://zephyr.home.dicr.tech/v1")!
+    private let apiBaseURL = URL(string: "https://omarchy.tail4e6e78.ts.net/v1")!
 
     func fetchWeather() async throws -> WeatherResponse {
         let url = endpointURL(path: "widget", queryItems: [
