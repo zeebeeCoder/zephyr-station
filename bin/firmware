@@ -23,7 +23,7 @@ Usage: bin/firmware <doctor|identify|backup|compile|upload|monitor> [gateway|sta
   upload <role>          Compile, verify a backup exists, then upload
   monitor                Open a 115200-baud serial monitor without toggling reset
 
-Upload is blocked by default pending firmware hardening issue #2. An explicitly
+Upload is blocked by default pending PKM task 2026-09-04-T0001. An explicitly
 reviewed legacy bench upload requires both ZEPHYR_ALLOW_UNHARDENED_FIRMWARE=1
 and ZEPHYR_ALLOW_FLASH=1. The normal just recipes do not set the hardening
 override. Override the port with ZEPHYR_ESP32_PORT. Set ZEPHYR_CLEAN_BUILD=1
@@ -122,7 +122,7 @@ require_deployable_config() {
 
 require_hardening_override() {
   [ "${ZEPHYR_ALLOW_UNHARDENED_FIRMWARE:-}" = 1 ] || fail \
-    "Firmware deployment is blocked pending hardening issue #2: https://github.com/zeebeeCoder/zephyr-station/issues/2"
+    "Firmware deployment is blocked pending PKM task 2026-09-04-T0001"
 }
 
 compile_role() {
@@ -171,7 +171,7 @@ case "$action" in
     else
       echo "Serial port: not connected"
     fi
-    echo "Firmware deployment: BLOCKED by default pending issue #2"
+    echo "Firmware deployment: BLOCKED by default pending PKM task 2026-09-04-T0001"
     ;;
   identify)
     require_port

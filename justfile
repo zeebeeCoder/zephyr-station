@@ -28,7 +28,7 @@ cook-clean role="gateway":
     @printf 'Clean-cooking %s firmware...\n' "{{ role }}"
     @ZEPHYR_CLEAN_BUILD=1 {{ firmware }} compile "{{ role }}"
 
-# BLOCKED pending issue #2; retained for the future guarded deployment workflow.
+# BLOCKED pending PKM task 2026-09-04-T0001; retained for the future guarded deployment workflow.
 deliver role="gateway":
     @printf 'Checking whether %s firmware is approved for delivery...\n' "{{ role }}"
     @ZEPHYR_ALLOW_FLASH=1 {{ firmware }} upload "{{ role }}"
@@ -38,7 +38,7 @@ observe:
     @printf '%s\n' 'Observing ESP32 serial output; press Ctrl-C to stop...'
     @{{ firmware }} monitor
 
-# BLOCKED pending issue #2; eventually deliver and immediately observe a role.
+# BLOCKED pending PKM task 2026-09-04-T0001; eventually deliver and immediately observe a role.
 dev role="gateway":
     @just deliver "{{ role }}"
     @just observe

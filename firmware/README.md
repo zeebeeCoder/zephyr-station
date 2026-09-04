@@ -54,7 +54,7 @@ just observe
 
 `cook` means compile, and `observe` means attach a timestamped serial monitor without toggling reset. The role defaults to `gateway`; pass `station` for the outdoor sender.
 
-`just deliver` and `just dev` are retained for the eventual deployment workflow but intentionally fail closed pending [firmware hardening issue #2](https://github.com/zeebeeCoder/zephyr-station/issues/2). The normal recipes do not enable the independent unhardened-firmware override.
+`just deliver` and `just dev` are retained for the eventual deployment workflow but intentionally fail closed pending PKM task `2026-09-04-T0001`. The normal recipes do not enable the independent unhardened-firmware override.
 
 Builds are incremental by default. Use `just cook-clean gateway` only when diagnosing a stale-build problem or validating a clean release build. Build output stays under the ignored `build/firmware/` directory.
 
@@ -62,7 +62,7 @@ Builds are incremental by default. Use `just cook-clean gateway` only when diagn
 
 `upload` is deliberately guarded. It:
 
-1. fails closed while [issue #2](https://github.com/zeebeeCoder/zephyr-station/issues/2) remains unresolved;
+1. fails closed by default while PKM task `2026-09-04-T0001` remains unresolved;
 2. independently requires an explicitly reviewed `ZEPHYR_ALLOW_UNHARDENED_FIRMWARE=1` legacy bench override;
 3. independently requires explicit `ZEPHYR_ALLOW_FLASH=1` confirmation;
 4. requires a complete checksummed 4 MiB backup;
@@ -70,7 +70,7 @@ Builds are incremental by default. Use `just cook-clean gateway` only when diagn
 6. uses DIO, the existing default OTA partition layout, 115200 baud, and no full-flash erase;
 7. requests upload verification.
 
-The hardening override is intentionally not set by `just deliver` or `just dev`. Remove this temporary override path when issue #2's acceptance checks are complete; do not normalize it as the production deployment interface.
+The hardening override is intentionally not set by `just deliver` or `just dev`. Remove this temporary override path when the acceptance checks in PKM task `2026-09-04-T0001` are complete; do not normalize it as the production deployment interface.
 
 Private backups are written outside Git under `~/.local/state/zephyr-station/firmware-backups/` with restrictive permissions. They may contain Wi-Fi or API credentials from NVS and must never be committed or shared.
 
@@ -142,6 +142,6 @@ The implementation was migrated from:
 The original files remain in `Mikobric/miko-arduino`.
 
 Compilation is only the migration gate. Deployment remains default-deny until
-[issue #2](https://github.com/zeebeeCoder/zephyr-station/issues/2) resolves and
-tests the legacy gateway's TLS trust, unavailable-time behavior, required
+the acceptance criteria in PKM task `2026-09-04-T0001` are complete, including
+tests of the legacy gateway's TLS trust, unavailable-time behavior, required
 sensor validation, and the station/gateway ACK-buffer-idempotency protocol.
