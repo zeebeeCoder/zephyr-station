@@ -1,11 +1,15 @@
 # ESP32 firmware development
 
-The repository reserves two Arduino sketch directories:
+The repository contains the two active Arduino sketches recovered from
+`Mikobric/miko-arduino`:
 
-- `gateway/gateway.ino` — mains-powered LoRa-to-HTTPS receiver
-- `station/station.ino` — outdoor sensor and LoRa sender
+- [`gateway/gateway.ino`](gateway/gateway.ino) — mains-powered LoRa-to-HTTPS receiver, TFT display, and forecast client
+- [`station/station.ino`](station/station.ino) — solar-powered outdoor sensor and LoRa sender
 
-Those source files are not present in this checkout yet. The connected board currently runs an existing **Weather Station Receiver (Cloud Edition)** gateway image, so do not replace it with a placeholder sketch. Retrieve the original source before uploading.
+They communicate using a matching 24-byte binary packet over a Seeed Grove
+LoRa Radio 868MHz UART bridge. The migration preserved the operational
+implementation; build validation does not by itself make the legacy network
+and delivery behavior production-safe.
 
 ## Validated local target
 
@@ -37,24 +41,20 @@ Do not run Arduino CLI as root and do not change the serial device to world-writ
 
 ## Workflow
 
-The root `justfile` is the normal orchestration interface. Mise pins `just` in `mise.toml`. Run `just` to see all recipes:
+The root `justfile` is the normal orchestration interface. Mise pins `just` in `mise.toml`. Run `just` to see all recipes. Source-recovery work currently supports inspection, compilation, backup, and observation:
 
 ```bash
 just doctor
 just inspect
 just cook gateway
+just cook station
 just backup
-just deliver gateway
 just observe
 ```
 
-For the normal edit-build-flash-log loop:
+`cook` means compile, and `observe` means attach a timestamped serial monitor without toggling reset. The role defaults to `gateway`; pass `station` for the outdoor sender.
 
-```bash
-just dev gateway
-```
-
-`cook` means compile, `deliver` means compile + guarded flash + verification, and `observe` means attach a timestamped serial monitor without toggling reset. The role defaults to `gateway`; pass `station` for the outdoor sender.
+`just deliver` and `just dev` are retained for the eventual deployment workflow but intentionally fail closed pending [firmware hardening issue #2](https://github.com/zeebeeCoder/zephyr-station/issues/2). The normal recipes do not enable the independent unhardened-firmware override.
 
 Builds are incremental by default. Use `just cook-clean gateway` only when diagnosing a stale-build problem or validating a clean release build. Build output stays under the ignored `build/firmware/` directory.
 
@@ -62,11 +62,15 @@ Builds are incremental by default. Use `just cook-clean gateway` only when diagn
 
 `upload` is deliberately guarded. It:
 
-1. requires explicit `ZEPHYR_ALLOW_FLASH=1` confirmation;
-2. requires a complete checksummed 4 MiB backup;
-3. compiles successfully before touching the device;
-4. uses DIO, the existing default OTA partition layout, 115200 baud, and no full-flash erase;
-5. requests upload verification.
+1. fails closed while [issue #2](https://github.com/zeebeeCoder/zephyr-station/issues/2) remains unresolved;
+2. independently requires an explicitly reviewed `ZEPHYR_ALLOW_UNHARDENED_FIRMWARE=1` legacy bench override;
+3. independently requires explicit `ZEPHYR_ALLOW_FLASH=1` confirmation;
+4. requires a complete checksummed 4 MiB backup;
+5. compiles successfully before touching the device;
+6. uses DIO, the existing default OTA partition layout, 115200 baud, and no full-flash erase;
+7. requests upload verification.
+
+The hardening override is intentionally not set by `just deliver` or `just dev`. Remove this temporary override path when issue #2's acceptance checks are complete; do not normalize it as the production deployment interface.
 
 Private backups are written outside Git under `~/.local/state/zephyr-station/firmware-backups/` with restrictive permissions. They may contain Wi-Fi or API credentials from NVS and must never be committed or shared.
 
@@ -82,7 +86,7 @@ A representative sketch using Wi-Fi, TLS, HTTP, and SPIFFS produced a 910 KB app
 | Unchanged incremental build | 5.44 s |
 | One source change, incremental build | 5.54 s |
 
-These are synthetic toolchain measurements; benchmark the recovered gateway source before optimizing further.
+These are synthetic toolchain measurements; benchmark the migrated gateway source before optimizing further.
 
 The existing gateway image is approximately 1.14 MB and deflates to about 726 KB. At 115200 baud, UART framing makes roughly 63 seconds the payload-only lower bound, before erase, protocol, bootloader, and reset overhead. Expect approximately 70–90 seconds for a real serial upload and roughly 75–100 seconds for an incremental edit-build-upload cycle. This estimate must be replaced with a measured upload time once source is available.
 
@@ -90,7 +94,7 @@ The CP2102 and ESP32 support faster rates. Removing two USB hub tiers improved s
 
 For a faster serial loop, change one physical variable at a time and repeat the sustained test: use a short known-good shielded data cable, disconnect peripherals that may contend with boot/UART pins or cause power dips, and finally try another ESP32 board/USB-UART bridge. Do not select a rate based only on a short successful transfer. Espressif likewise recommends lowering baud and removing attached GPIO devices when diagnosing esptool communication: <https://docs.espressif.com/projects/esptool/en/latest/esp32/troubleshooting.html>.
 
-After the original gateway source is recovered and serial recovery is proven, consider a development-only authenticated OTA path. The existing two-slot partition table is OTA-capable. OTA avoids the slow UART transfer, but it must not weaken network or update authentication, and the serial backup/recovery path must remain available.
+After serial recovery is proven, consider a development-only authenticated OTA path. The existing two-slot partition table is OTA-capable. OTA avoids the slow UART transfer, but it must not weaken network or update authentication, and the serial backup/recovery path must remain available.
 
 ## Toolchain decision
 
@@ -104,19 +108,40 @@ Use Arduino CLI first:
 
 Re-evaluate PlatformIO or native ESP-IDF only if the recovered source exposes concrete limitations in Arduino CLI (complex multi-environment builds, JTAG debugging, native component requirements, or materially worse measured build times).
 
-## Dependencies and secrets
+## Dependencies and local configuration
 
-Do not guess library versions before the firmware source is recovered. Compile first, then install only the libraries required by its includes, for example:
+Each role has a `sketch.yaml` profile that pins Arduino-ESP32 3.3.11 and its
+indexed library versions. `just cook gateway|station` uses that profile and may
+download missing pinned packages.
 
-```bash
-arduino-cli lib search '<library name>'
-arduino-cli lib install '<exact library name>@<version>'
-```
+The radio is the older **Seeed Grove LoRa Radio 433MHz/868MHz** with a UART-to-SPI
+bridge. It requires Seeed's templated UART `RH_RF95` fork—not standard RadioHead
+and not the Wio-E5 AT-command library. The published 2.0.0 archive does not
+compile on ESP32, so `bin/firmware` fetches the reviewed upstream commit
+`f82d4dc943e8c91fd80ecef5fa5f1a625466ca0d` into ignored build storage before
+compilation.
 
-Once dependencies are known, record them in an Arduino `sketch.yaml` profile so another machine can reproduce the build.
+The gateway expects ignored `gateway/config.h`. On its first build the helper
+copies `gateway/config.example.h`, which contains safe placeholders and the
+current non-secret API endpoint. Populate credentials and location locally;
+the guarded upload refuses placeholder values.
 
-Keep role-local `secrets.h` and `trust_anchor.h` files out of Git. Follow [`../docs/esp32-integration-guide.md`](../docs/esp32-integration-guide.md): retain TLS hostname and CA verification, synchronize time with NTP, and never use `setInsecure()`.
+Keep role-local `config.h`, `secrets.h`, and `trust_anchor.h` files out of Git.
+Follow [`../docs/esp32-integration-guide.md`](../docs/esp32-integration-guide.md):
+retain TLS hostname and CA verification, synchronize time with NTP, and never
+use `setInsecure()`.
 
-## Current blocker
+## Migration provenance and deployment status
 
-Neither local Git history nor any branch contains Arduino source, and the `Mikobric/miko-arduino` repository named in `RECAP.md` is not available to the configured GitHub account. Obtain the gateway/station sketch source (likely from the Mac that built the current image) and place it in the paths above. Compiled flash images cannot be converted back into the original maintainable C++ source.
+The implementation was migrated from:
+
+- station: `weather-station/weather_station_solar/weather_station_solar.ino`
+- gateway: `weather-station/weather_station_receiver_cloud/weather_station_receiver_cloud.ino`
+- local gateway configuration: `weather-station/weather_station_receiver_cloud/config.h`
+
+The original files remain in `Mikobric/miko-arduino`.
+
+Compilation is only the migration gate. Deployment remains default-deny until
+[issue #2](https://github.com/zeebeeCoder/zephyr-station/issues/2) resolves and
+tests the legacy gateway's TLS trust, unavailable-time behavior, required
+sensor validation, and the station/gateway ACK-buffer-idempotency protocol.

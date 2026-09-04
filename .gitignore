@@ -39,6 +39,9 @@ venv/
 firmware/*/secrets.h
 firmware/*/trust_anchor.h
 
+# Local firmware credentials (copy from config.example.h)
+firmware/gateway/config.h
+
 # Logs
 *.log
 npm-debug.log*

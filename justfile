@@ -28,9 +28,9 @@ cook-clean role="gateway":
     @printf 'Clean-cooking %s firmware...\n' "{{ role }}"
     @ZEPHYR_CLEAN_BUILD=1 {{ firmware }} compile "{{ role }}"
 
-# Compile, validate the rollback backup, flash, and verify.
+# BLOCKED pending issue #2; retained for the future guarded deployment workflow.
 deliver role="gateway":
-    @printf 'Delivering %s firmware over the qualified 115200-baud connection...\n' "{{ role }}"
+    @printf 'Checking whether %s firmware is approved for delivery...\n' "{{ role }}"
     @ZEPHYR_ALLOW_FLASH=1 {{ firmware }} upload "{{ role }}"
 
 # Follow timestamped serial output without toggling DTR/RTS.
@@ -38,7 +38,7 @@ observe:
     @printf '%s\n' 'Observing ESP32 serial output; press Ctrl-C to stop...'
     @{{ firmware }} monitor
 
-# Deliver a role and immediately attach its serial monitor.
+# BLOCKED pending issue #2; eventually deliver and immediately observe a role.
 dev role="gateway":
     @just deliver "{{ role }}"
     @just observe
