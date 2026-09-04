@@ -36,6 +36,8 @@ venv/
 .pio/
 .pioenvs/
 .piolibdeps/
+firmware/*/secrets.h
+firmware/*/trust_anchor.h
 
 # Logs
 *.log
