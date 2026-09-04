@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-readonly APPROVED_PRIVATE_HOSTNAME=zephyr.home.dicr.tech
+readonly APPROVED_PRIVATE_HOSTNAME=omarchy.tail4e6e78.ts.net
 readonly APPROVED_TAILNET_HOST=100.108.58.19
 readonly APPROVED_LAN_HOST=192.168.1.50
 readonly CERTIFICATE_MIN_VALIDITY_SECONDS=$((14 * 24 * 60 * 60))
@@ -126,8 +126,9 @@ if ! openssl pkey -in "$private_key_file" -check -noout >/dev/null 2>&1; then
   echo "ERROR: TLS private key PEM is invalid." >&2
   exit 1
 fi
+san_hostname_pattern=${ZEPHYR_PRIVATE_HOSTNAME//./\.}
 if ! openssl x509 -in "$certificate_file" -noout -ext subjectAltName 2>/dev/null \
-  | grep -Eq '(^|[,:[:space:]])DNS:zephyr\.home\.dicr\.tech([,[:space:]]|$)'; then
+  | grep -Eq "(^|[,:[:space:]])DNS:${san_hostname_pattern}([,[:space:]]|$)"; then
   echo "ERROR: TLS certificate requires an exact DNS SAN for $ZEPHYR_PRIVATE_HOSTNAME." >&2
   exit 1
 fi

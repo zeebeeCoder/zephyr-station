@@ -27,9 +27,9 @@ builder:
   arch: amd64
 
 proxy:
-  host: <%= ENV.fetch("ZEPHYR_PRIVATE_HOSTNAME", "zephyr.home.dicr.tech") %>
+  host: <%= ENV.fetch("ZEPHYR_PRIVATE_HOSTNAME", "omarchy.tail4e6e78.ts.net") %>
   app_port: 3000
-  # A custom DNS-01 certificate avoids Kamal's public HTTP/TLS challenge path.
+  # A custom Tailscale certificate avoids Kamal's public HTTP/TLS challenge path.
   ssl:
     certificate_pem: ZEPHYR_TLS_CERTIFICATE_PEM
     private_key_pem: ZEPHYR_TLS_PRIVATE_KEY_PEM

@@ -73,12 +73,12 @@ make_certificate() {
     -keyout "$prefix.key" -out "$prefix.crt" >/dev/null 2>&1
 }
 
-make_certificate zephyr.home.dicr.tech 30 "$TEST_ROOT/valid"
+make_certificate omarchy.tail4e6e78.ts.net 30 "$TEST_ROOT/valid"
 make_certificate wrong.home.dicr.tech 30 "$TEST_ROOT/wrong-host"
-make_certificate zephyr.home.dicr.tech 1 "$TEST_ROOT/expiring"
-make_certificate zephyr.home.dicr.tech 30 "$TEST_ROOT/other-key"
+make_certificate omarchy.tail4e6e78.ts.net 1 "$TEST_ROOT/expiring"
+make_certificate omarchy.tail4e6e78.ts.net 30 "$TEST_ROOT/other-key"
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
-  -days 30 -subj '/CN=zephyr.home.dicr.tech' \
+  -days 30 -subj '/CN=omarchy.tail4e6e78.ts.net' \
   -keyout "$TEST_ROOT/cn-only.key" -out "$TEST_ROOT/cn-only.crt" >/dev/null 2>&1
 
 valid_certificate=$(<"$TEST_ROOT/valid.crt")
@@ -164,7 +164,7 @@ pass "insecure secrets files and hostname/deployment-address overrides are rejec
 : > "$deploy_log"
 valid_output="$TEST_ROOT/valid.out"
 run_check "$valid_output" "$valid_certificate" "$valid_key"
-grep -q 'Deployment preflight passed for zephyr.home.dicr.tech' "$valid_output" \
+grep -q 'Deployment preflight passed for omarchy.tail4e6e78.ts.net' "$valid_output" \
   || fail "Valid preflight did not use the approved default hostname"
 [ "$(cat "$deploy_log")" = $'bundle check\nbundle exec kamal config' ] \
   || fail "Check action ran commands beyond bundle/config validation"
@@ -214,7 +214,7 @@ const text = fs.readFileSync(process.argv[2], 'utf8');
 function requireMatch(pattern, message) {
   if (!pattern.test(text)) throw new Error(message);
 }
-requireMatch(/^  host: <%= ENV\.fetch\("ZEPHYR_PRIVATE_HOSTNAME", "zephyr\.home\.dicr\.tech"\) %>$/m, 'wrong host');
+requireMatch(/^  host: <%= ENV\.fetch\("ZEPHYR_PRIVATE_HOSTNAME", "omarchy\.tail4e6e78\.ts\.net"\) %>$/m, 'wrong host');
 requireMatch(/^  ssl:\n    certificate_pem: ZEPHYR_TLS_CERTIFICATE_PEM\n    private_key_pem: ZEPHYR_TLS_PRIVATE_KEY_PEM$/m, 'ssl must be custom');
 requireMatch(/^  ssl_redirect: true$/m, 'redirect disabled');
 requireMatch(/^  forward_headers: false$/m, 'forwarding changed');

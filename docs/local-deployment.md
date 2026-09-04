@@ -1,17 +1,17 @@
 # Private Deployment Runbook
 
-Zephyr's approved client endpoint is `https://zephyr.home.dicr.tech`. It is private even though its certificate is publicly trusted:
+Zephyr's approved client endpoint is `https://omarchy.tail4e6e78.ts.net`. It is private even though its Tailscale-issued certificate is publicly trusted:
 
 ```text
 trusted LAN / IoT VLAN / WireGuard
-  -> private DNS: zephyr.home.dicr.tech = 192.168.1.50
+  -> private DNS: omarchy.tail4e6e78.ts.net = 192.168.1.50
   -> TCP 443 -> kamal-proxy -> Fastify -> Docker-private PostgreSQL
 
 operator -> Tailscale/SSH KAMAL_HOST -> Kamal
 WAN -> no Zephyr forwarding
 ```
 
-`KAMAL_HOST` is the SSH deployment address and remains independent of the client hostname. No repository command configures UDM DNS/firewall, Cloudflare, certificate issuance, or WAN forwarding.
+`KAMAL_HOST` is the SSH deployment address and remains independent of the client hostname. No repository command configures UDM DNS/firewall, invokes `tailscale cert`, or changes WAN forwarding.
 
 ## Prerequisites
 
@@ -19,16 +19,16 @@ WAN -> no Zephyr forwarding
 - Docker and the existing Kamal/PostgreSQL deployment are healthy.
 - GHCR credentials have `repo` and `write:packages` access.
 - Ruby/Bundler dependencies are installed with `bundle install`.
-- A reviewed certificate full chain and matching private key cover `zephyr.home.dicr.tech` and have at least 14 days remaining.
+- A reviewed Tailscale certificate full chain and matching private key cover `omarchy.tail4e6e78.ts.net` and have at least 14 days remaining.
 - `.kamal/secrets` is a regular, non-symlink mode-600 file when used.
 - `/home/sagent/.kamal/proxy/apps-config/zephyr/tls/web` already exists on the deployment host as a real non-symlink directory with exact uid 1000, gid 1001, and mode 2750.
 - Private DNS and narrow TCP 443 rules are separately approved before client testing.
 
-The custom certificate must come from the separately reviewed DNS-01 process. This repository does not yet issue or renew it. Kamal's hash-form `proxy.ssl` loads supplied PEM values and does **not** request a public Let's Encrypt challenge.
+The custom certificate comes from `tailscale cert` on this already-authenticated host. Cloudflare and public DNS challenges are not part of the Zephyr certificate path. Kamal's hash-form `proxy.ssl` loads the supplied PEM values and does **not** request a public challenge.
 
 ## Configuration and secrets
 
-The approved hostname defaults to `zephyr.home.dicr.tech`. An explicit `ZEPHYR_PRIVATE_HOSTNAME` is accepted only when it exactly matches that value. Never use `KAMAL_HOST` as the TLS hostname.
+The approved hostname defaults to `omarchy.tail4e6e78.ts.net`. An explicit `ZEPHYR_PRIVATE_HOSTNAME` is accepted only when it exactly matches that value. Never use `KAMAL_HOST` as the TLS hostname.
 
 Copy the forwarding template:
 
@@ -52,7 +52,7 @@ Set the private deployment address and run the non-mutating preflight:
 
 ```bash
 export KAMAL_HOST=100.108.58.19
-export ZEPHYR_PRIVATE_HOSTNAME=zephyr.home.dicr.tech  # optional exact override
+export ZEPHYR_PRIVATE_HOSTNAME=omarchy.tail4e6e78.ts.net  # optional exact override
 bin/deploy check
 ```
 
@@ -62,20 +62,20 @@ Preflight requires a clean tree; validates the secrets-file type/mode, certifica
 
 Required external state, applied only through separate approval:
 
-- UDM local DNS returns `192.168.1.50` for `zephyr.home.dicr.tech` to trusted, IoT, and WireGuard clients.
-- Public resolvers return no Zephyr origin `A`, `AAAA`, or `CNAME`.
+- Direct UDM DNS returns `192.168.1.50` for `omarchy.tail4e6e78.ts.net` to trusted, IoT, and WireGuard clients. Tailscale split DNS returns `100.108.58.19`; both answers reach the same server.
+- No public Zephyr origin record or WAN forwarding is required.
 - Only the approved station/master can cross from IoT to `192.168.1.50:443`; DHCP, private DNS, and NTP remain available as required.
 - WireGuard clients can reach private DNS and `192.168.1.50:443`.
 - WAN TCP 22/80/443/3000/5432 remains closed; Tailscale remains the administration plane.
 
-The removed `infrastructure/cloudflare-dns` public-A project must not be reconstructed or applied. DNS-01 certificate issuance uses temporary `_acme-challenge` TXT records only.
+The removed `infrastructure/cloudflare-dns` public-A project must not be reconstructed or applied. Tailscale handles certificate issuance for its own hostname without Cloudflare credentials or Zephyr DNS records.
 
 After private DNS/network approval, validate the certificate and route without publishing DNS by using a local override from an authorized client:
 
 ```bash
 curl --fail --show-error \
-  --resolve zephyr.home.dicr.tech:443:192.168.1.50 \
-  https://zephyr.home.dicr.tech/up
+  --resolve omarchy.tail4e6e78.ts.net:443:192.168.1.50 \
+  https://omarchy.tail4e6e78.ts.net/up
 ```
 
 Do not use `--insecure`. Verify SAN, issuer/chain, and expiry independently before consumer cutover.
@@ -118,13 +118,13 @@ bin/deploy
 
 Use `bin/deploy setup` only for a genuinely fresh host after the same TLS directory has been prepared and reviewed. Before mutation, CI runs with registry, database, ingest, and both TLS PEM secrets explicitly removed from its subprocess environment; the original values remain available only for the subsequent normal Kamal command.
 
-This is deliberately narrow MVP hardening, not certificate lifecycle automation. Automated DNS-01 issuance/renewal, expiry alerting, and tested certificate rotation remain post-MVP work.
+This is deliberately narrow MVP hardening. Automatic `tailscale cert` renewal and proxy reload remain a post-MVP operation; until then, record and monitor the certificate expiry date.
 
 ## Verification
 
 Keep writers/consumers on their previous endpoint until all approved checks pass:
 
-1. `https://zephyr.home.dicr.tech/up` and `/ready` return 200 through private resolution.
+1. `https://omarchy.tail4e6e78.ts.net/up` and `/ready` return 200 through private resolution.
 2. `/v1/hello`, widget, and history preserve their contracts.
 3. Authenticated ingest succeeds; missing/wrong keys, oversized bodies, and rate limits retain expected behavior.
 4. Existing staging readings survive application replacement.
@@ -152,7 +152,7 @@ All Kamal commands require `KAMAL_HOST` and the custom TLS inputs because render
 
 Before a later approved deployment, record the current application version and retain its image. Application rollback must not remove PostgreSQL or its bind mount. Certificate rollback must restore a previously approved certificate/key version through the hardened publication path; never disable hostname validation or open WAN ports as a workaround.
 
-Automated certificate issuance/renewal, expiry alerting, and safe rotation remain post-MVP work. Until those are implemented and proven, operators must monitor expiry and perform separately reviewed certificate replacement before the 14-day deployment floor blocks rollout.
+Automatic `tailscale cert` renewal, expiry alerting, and safe proxy reload remain post-MVP work. Until then, operators must monitor expiry and refresh the Tailscale certificate before the 14-day deployment floor blocks rollout.
 
 ## Teardown guardrails
 

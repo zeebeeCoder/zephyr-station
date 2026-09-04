@@ -196,7 +196,7 @@ infrastructure/
 
 The former public-origin `zephyr-dns` project is removed from active scope; [`cloudflare-dns/README.md`](cloudflare-dns/README.md) is documentation-only and contains no Pulumi manifest, provider, program, dependencies, stack instructions, or apply command. It was never initialized or applied, so there is no DNS stack to destroy.
 
-The approved hostname `zephyr.home.dicr.tech` resolves only through household private DNS to `192.168.1.50`. No public `A`, `AAAA`, or `CNAME` should expose the origin. A later reviewed ACME DNS-01 flow may create temporary challenge `TXT` records without reviving this public-A project.
+The approved API uses the host's Tailscale certificate hostname, resolved by household DNS to `192.168.1.50`. No public Zephyr origin record or Cloudflare DNS-01 flow is required. The former public-A project must not be revived for certificate issuance.
 
 The legacy AWS project in this directory remains separate and unchanged. Its preview, `npm run up`, and `npm run destroy` commands never create, update, or delete Cloudflare DNS records.
 
