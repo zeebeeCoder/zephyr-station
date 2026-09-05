@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/zephyr-firmware-command-tests.XXXXXX")
+TESTS_RUN=0
+trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
+
+fail() { echo "FAIL: $*" >&2; exit 1; }
+pass() { TESTS_RUN=$((TESTS_RUN + 1)); echo "  ✓ $1"; }
+assert_log() {
+  local expected=$1 actual
+  actual=$(<"$DELEGATE_LOG")
+  [ "$actual" = "$expected" ] || fail "Unexpected delegation log. Expected [$expected], got [$actual]"
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || fail "Required test command not found: $1"
+}
+
+require_command just
+require_command sha256sum
+if command -v mise >/dev/null 2>&1; then
+  JUST_BIN=$(mise which just)
+else
+  JUST_BIN=$(command -v just)
+fi
+[ -x "$JUST_BIN" ] || fail "Could not resolve the just executable"
+
+fake_bin="$TEST_ROOT/fake-bin"
+mkdir -p "$fake_bin"
+cat > "$fake_bin/arduino-cli" <<'SH'
+#!/usr/bin/env bash
+echo "FAIL: role validation reached arduino-cli" >&2
+exit 99
+SH
+chmod 755 "$fake_bin/arduino-cli"
+export PATH="$fake_bin:$PATH"
+
+# Run the committed Just command surface against a recording firmware stub.
+delegate_repo="$TEST_ROOT/delegate-repo"
+mkdir -p "$delegate_repo/bin"
+cp "$REPO_ROOT/justfile" "$REPO_ROOT/esp.just" "$delegate_repo/"
+cat > "$delegate_repo/bin/firmware" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'clean=%s flash=%s args=%s\n' \
+  "${ZEPHYR_CLEAN_BUILD-unset}" "${ZEPHYR_ALLOW_FLASH-unset}" "$*" \
+  >> "${FIRMWARE_TEST_LOG:?}"
+[ "${FIRMWARE_TEST_FAIL:-}" != "${1:-}" ] || exit 42
+SH
+chmod 755 "$delegate_repo/bin/firmware"
+DELEGATE_LOG="$TEST_ROOT/delegate.log"
+export FIRMWARE_TEST_LOG=$DELEGATE_LOG
+
+run_just() {
+  (cd "$delegate_repo" && env -u ZEPHYR_CLEAN_BUILD -u ZEPHYR_ALLOW_FLASH \
+    -u ZEPHYR_ALLOW_UNHARDENED_FIRMWARE "$JUST_BIN" "$@")
+}
+
+: > "$DELEGATE_LOG"
+list_output=$(run_just esp)
+for command in doctor inspect backup cook cook-clean deliver dev observe clean; do
+  grep -Eq "^[[:space:]]+$command([[:space:]]|$)" <<< "$list_output" \
+    || fail "just esp did not list $command"
+done
+[ ! -s "$DELEGATE_LOG" ] || fail "just esp invoked firmware"
+[ ! -e "$delegate_repo/build" ] || fail "just esp created build state"
+pass "just esp lists the namespace without delegating or creating state"
+
+root_list=$(run_just --list)
+grep -Eq '^[[:space:]]+esp \.\.\.' <<< "$root_list" || fail "root list does not expose esp namespace"
+pass "root command list exposes one ESP namespace"
+
+check_delegation() {
+  local expected=$1
+  shift
+  : > "$DELEGATE_LOG"
+  run_just "$@" >/dev/null
+  assert_log "$expected"
+}
+
+check_delegation 'clean=unset flash=unset args=doctor' esp doctor
+check_delegation 'clean=unset flash=unset args=identify' esp inspect
+check_delegation 'clean=unset flash=unset args=backup' esp backup
+check_delegation 'clean=0 flash=unset args=compile gateway' esp cook
+check_delegation 'clean=0 flash=unset args=compile gateway' esp cook gateway
+check_delegation 'clean=0 flash=unset args=compile station' esp cook station
+check_delegation 'clean=1 flash=unset args=compile gateway' esp cook-clean
+check_delegation 'clean=1 flash=unset args=compile station' esp cook-clean station
+check_delegation 'clean=unset flash=1 args=upload gateway' esp deliver
+check_delegation 'clean=unset flash=1 args=upload station' esp deliver station
+check_delegation 'clean=unset flash=unset args=monitor' esp observe
+check_delegation 'clean=unset flash=unset args=clean gateway' esp clean
+check_delegation 'clean=unset flash=unset args=clean station' esp clean station
+pass "all namespaced commands delegate with exact actions, roles, and build mode"
+
+: > "$DELEGATE_LOG"
+run_just esp dev station >/dev/null
+assert_log $'clean=unset flash=1 args=upload station\nclean=unset flash=unset args=monitor'
+pass "dev delegates guarded delivery before observation"
+
+: > "$DELEGATE_LOG"
+set +e
+(cd "$delegate_repo" && env -u ZEPHYR_CLEAN_BUILD -u ZEPHYR_ALLOW_FLASH \
+  -u ZEPHYR_ALLOW_UNHARDENED_FIRMWARE FIRMWARE_TEST_FAIL=upload \
+  "$JUST_BIN" esp dev gateway) \
+  >"$TEST_ROOT/dev-failure.out" 2>&1
+status=$?
+set -e
+[ "$status" -eq 42 ] || fail "failed delivery returned $status instead of 42"
+assert_log 'clean=unset flash=1 args=upload gateway'
+pass "dev stops before observation when delivery fails"
+
+if grep -Eq 'arduino-cli|esptool|sha256sum|rm[[:space:]]+-rf' "$REPO_ROOT/esp.just"; then
+  fail "esp.just duplicates firmware implementation logic"
+fi
+[ "$(grep -Ec '\{\{ firmware \}\}' "$REPO_ROOT/esp.just")" -eq 8 ] \
+  || fail "Unexpected direct firmware delegation count"
+pass "ESP module remains a thin bin/firmware facade"
+
+# Exercise role and deployment policy in a sandboxed copy of the real implementation.
+policy_repo="$TEST_ROOT/policy-repo"
+mkdir -p "$policy_repo/bin" "$policy_repo/firmware/gateway" "$policy_repo/firmware/station"
+cp "$REPO_ROOT/bin/firmware" "$policy_repo/bin/firmware"
+chmod 755 "$policy_repo/bin/firmware"
+
+for command in cook cook-clean deliver dev clean; do
+  output="$TEST_ROOT/invalid-$command.out"
+  if (cd "$policy_repo" && "$JUST_BIN" --justfile "$REPO_ROOT/justfile" esp "$command" invalid) \
+    >"$output" 2>&1; then
+    fail "just esp $command accepted an invalid role"
+  fi
+  grep -Fq "Role must be 'gateway' or 'station'" "$output" \
+    || fail "just esp $command failed after role validation"
+done
+[ ! -e "$policy_repo/build" ] || fail "invalid roles created build state"
+pass "invalid roles fail before build or device access"
+
+for role in gateway station; do
+  output="$TEST_ROOT/gate-$role.out"
+  if (cd "$policy_repo" && env -u ZEPHYR_ALLOW_UNHARDENED_FIRMWARE \
+    -u ZEPHYR_ALLOW_FLASH ZEPHYR_ESP32_PORT=/definitely/not-a-device \
+    ./bin/firmware upload "$role") >"$output" 2>&1; then
+    fail "default upload unexpectedly passed for $role"
+  fi
+  grep -Fq 'Firmware deployment is blocked pending PKM task 2026-09-04-T0001' "$output" \
+    || fail "default $role upload reached a later guard"
+done
+pass "both roles fail at the parent hardening gate before port access"
+
+output="$TEST_ROOT/flash-confirmation.out"
+if (cd "$policy_repo" && env -u ZEPHYR_ALLOW_FLASH ZEPHYR_ESP32_PORT=/dev/null \
+  ZEPHYR_ALLOW_UNHARDENED_FIRMWARE=1 ./bin/firmware upload gateway) \
+  >"$output" 2>&1; then
+  fail "upload passed without flash confirmation"
+fi
+grep -Fq 'Refusing to flash without explicit confirmation' "$output" \
+  || fail "flash confirmation guard was not independent"
+pass "flash confirmation remains independent from hardening approval"
+
+empty_backups="$TEST_ROOT/missing-backups"
+output="$TEST_ROOT/backup-gate.out"
+if (cd "$policy_repo" && ZEPHYR_ESP32_PORT=/dev/null \
+  ZEPHYR_ALLOW_UNHARDENED_FIRMWARE=1 ZEPHYR_ALLOW_FLASH=1 \
+  ZEPHYR_ESP32_BACKUP_DIR="$empty_backups" ./bin/firmware upload gateway) \
+  >"$output" 2>&1; then
+  fail "upload passed without a backup"
+fi
+grep -Fq 'No flash backup directory' "$output" || fail "backup prerequisite was bypassed"
+pass "checksummed backup prerequisite remains before compilation"
+
+backup_dir="$TEST_ROOT/backups"
+mkdir -p "$backup_dir"
+backup="$backup_dir/esp32-fixture-4MB.bin"
+truncate -s 4194304 "$backup"
+sha256sum "$backup" > "$backup.sha256"
+printf '#define WIFI_SSID "your-wifi"\n' > "$policy_repo/firmware/gateway/config.h"
+output="$TEST_ROOT/config-gate.out"
+if (cd "$policy_repo" && ZEPHYR_ESP32_PORT=/dev/null \
+  ZEPHYR_ALLOW_UNHARDENED_FIRMWARE=1 ZEPHYR_ALLOW_FLASH=1 \
+  ZEPHYR_ESP32_BACKUP_DIR="$backup_dir" ./bin/firmware upload gateway) \
+  >"$output" 2>&1; then
+  fail "upload passed with placeholder configuration"
+fi
+grep -Fq 'Gateway config contains placeholders' "$output" \
+  || fail "placeholder configuration guard was bypassed"
+[ ! -e "$policy_repo/build" ] || fail "guard tests reached compilation"
+pass "gateway configuration guard remains before compilation"
+
+mkdir -p "$policy_repo/build/firmware/gateway" "$policy_repo/build/firmware/dependencies"
+touch "$policy_repo/build/firmware/gateway/gateway.ino_flashed.bin"
+touch "$policy_repo/build/firmware/dependencies/keep"
+"$policy_repo/bin/firmware" clean gateway > "$TEST_ROOT/clean.out"
+[ ! -e "$policy_repo/build/firmware/gateway" ] || fail "clean retained the role directory"
+[ -e "$policy_repo/build/firmware/dependencies/keep" ] || fail "clean removed shared dependencies"
+grep -Fq 'including fast-reflash references' "$TEST_ROOT/clean.out" \
+  || fail "clean did not report reference removal"
+pass "clean removes only role build state and reports reference loss"
+
+echo "→ Firmware command tests passed ($TESTS_RUN checks)."

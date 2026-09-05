@@ -14,7 +14,7 @@ readonly GROVE_LORA_DIR="$REPO_ROOT/build/firmware/dependencies/grove-lora"
 
 usage() {
   cat <<'EOF'
-Usage: bin/firmware <doctor|identify|backup|compile|upload|monitor> [gateway|station]
+Usage: bin/firmware <doctor|identify|backup|compile|upload|monitor|clean> [gateway|station]
 
   doctor                Check the local toolchain, source, and serial access
   identify              Read chip and flash identity without changing flash
@@ -22,6 +22,7 @@ Usage: bin/firmware <doctor|identify|backup|compile|upload|monitor> [gateway|sta
   compile <role>         Compile firmware/gateway or firmware/station
   upload <role>          Compile, verify a backup exists, then upload
   monitor                Open a 115200-baud serial monitor without toggling reset
+  clean <role>           Remove role build output and fast-reflash references
 
 Upload is blocked by default pending PKM task 2026-09-04-T0001. An explicitly
 reviewed legacy bench upload requires both ZEPHYR_ALLOW_UNHARDENED_FIRMWARE=1
@@ -144,6 +145,14 @@ compile_role() {
   fi
 }
 
+clean_role() {
+  local role=$1 build_path
+  sketch_dir "$role" >/dev/null
+  build_path="$REPO_ROOT/build/firmware/$role"
+  rm -rf -- "$build_path"
+  echo "Removed build/firmware/$role, including fast-reflash references"
+}
+
 action=${1:-}
 case "$action" in
   doctor)
@@ -247,6 +256,9 @@ case "$action" in
     require_port
     arduino-cli monitor --port "$PORT" --timestamp \
       --config baudrate=115200,dtr=off,rts=off
+    ;;
+  clean)
+    clean_role "${2:-}"
     ;;
   -h|--help|help)
     usage

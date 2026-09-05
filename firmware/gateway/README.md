@@ -12,7 +12,7 @@ Zephyr ingestion API over Wi-Fi.
 during migration, but it is intentionally ignored by Git because it contains
 credentials.
 
-`just cook gateway` creates the ignored file from `config.example.h` when it
+`just esp cook gateway` creates the ignored file from `config.example.h` when it
 is absent, allowing a clean checkout to compile. Before uploading, fill in the
 Wi-Fi credentials, API key, device ID, and location. The guarded upload command
 rejects placeholder configuration and remains default-deny pending PKM task
@@ -22,7 +22,7 @@ Compilation does not imply deployment approval.
 ## Build and dependencies
 
 ```sh
-just cook gateway
+just esp cook gateway
 ```
 
 [`sketch.yaml`](sketch.yaml) pins the ESP32 core and indexed Arduino libraries.

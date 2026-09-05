@@ -41,24 +41,40 @@ Do not run Arduino CLI as root and do not change the serial device to world-writ
 
 ## Workflow
 
-The root `justfile` is the normal orchestration interface. Mise pins `just` in `mise.toml`. Run `just` to see all recipes. Source-recovery work currently supports inspection, compilation, backup, and observation:
+The root `justfile` exposes monorepository command namespaces. Mise pins `just`
+in `mise.toml`. `just esp` only lists the ESP32 recipes; it does not compile or
+access hardware:
 
 ```bash
-just doctor
-just inspect
-just cook gateway
-just cook station
-just backup
-just observe
+just esp
+just esp doctor
+just esp inspect
+just esp backup
+just esp cook                 # gateway by default
+just esp cook station
+just esp cook-clean gateway
+just esp deliver gateway
+just esp dev gateway
+just esp observe
+just esp clean gateway
 ```
 
-`cook` means compile, and `observe` means attach a timestamped serial monitor without toggling reset. The role defaults to `gateway`; pass `station` for the outdoor sender.
+`cook` is incremental and retains the role's build directory. `cook-clean` is
+for stale-build diagnosis and release validation: Arduino CLI's `--clean`
+removes all existing role build content, including fast-reflash references,
+before rebuilding. `clean` removes the complete role build directory, also
+including those references. The first build may download pinned profile
+packages. Build output remains under ignored `build/firmware/` storage.
 
-`just deliver` and `just dev` are retained for the eventual deployment workflow but intentionally fail closed pending PKM task `2026-09-04-T0001`. The normal recipes do not enable the independent unhardened-firmware override.
+The role defaults to `gateway` for cook, cook-clean, deliver, dev, and clean;
+pass `station` for the outdoor sender. `observe` attaches a timestamped serial
+monitor without toggling reset. `dev` is exactly guarded deliver followed by
+observe; a failed delivery prevents observation.
 
-Builds are incremental by default. Use `just cook-clean gateway` only when diagnosing a stale-build problem or validating a clean release build. Build output stays under the ignored `build/firmware/` directory.
-
-`bin/firmware` remains the lower-level implementation and may be called directly for scripting. The justfile intentionally contains no duplicated device or flash logic.
+`bin/firmware` remains the sole implementation of role validation, device,
+backup, build, clean, and upload policy. The `esp` Just module only delegates.
+The former unnamespaced root recipes are not retained as a second public
+command surface.
 
 `upload` is deliberately guarded. It:
 
@@ -66,29 +82,77 @@ Builds are incremental by default. Use `just cook-clean gateway` only when diagn
 2. independently requires an explicitly reviewed `ZEPHYR_ALLOW_UNHARDENED_FIRMWARE=1` legacy bench override;
 3. independently requires explicit `ZEPHYR_ALLOW_FLASH=1` confirmation;
 4. requires a complete checksummed 4 MiB backup;
-5. compiles successfully before touching the device;
-6. uses DIO, the existing default OTA partition layout, 115200 baud, and no full-flash erase;
-7. requests upload verification.
+5. rejects invalid roles and placeholder gateway configuration before compilation;
+6. compiles successfully before touching the device;
+7. uses DIO, the existing default OTA partition layout, 115200 baud, and no full-flash erase;
+8. requests upload verification.
 
-The hardening override is intentionally not set by `just deliver` or `just dev`. Remove this temporary override path when the acceptance checks in PKM task `2026-09-04-T0001` are complete; do not normalize it as the production deployment interface.
+The hardening override is intentionally not set by `just esp deliver` or
+`just esp dev`. Remove this temporary override path when the acceptance checks
+in PKM task `2026-09-04-T0001` are complete; do not normalize it as the
+production deployment interface.
 
 Private backups are written outside Git under `~/.local/state/zephyr-station/firmware-backups/` with restrictive permissions. They may contain Wi-Fi or API credentials from NVS and must never be committed or shared.
 
 The USB connection proved unreliable for long reads above 115200 baud, so the backup command reads verified 64 KiB chunks with retries. Expect it to take several minutes. A valid backup can be reused across ordinary development uploads; take another after intentional changes to on-device configuration or stored data.
 
+## Differential serial flashing
+
+Arduino-ESP32 3.3.11 routes serial upload through its installed `flasher.py`
+wrapper and esptool 5.3.1. The wrapper stores these per-role references in
+`build/firmware/<role>/` after a successful upload:
+
+```text
+<role>.ino_flashed.bin
+<role>.ino.bootloader_flashed.bin
+<role>.ino.partitions_flashed.bin
+boot_app0_flashed.bin
+```
+
+On the next upload, available bootloader, partition, and application references
+are passed to esptool with `--diff-with`. esptool compares 4 KiB sectors,
+retains its on-device MD5 checks and full-write fallback, uses compressed
+transfer, and verifies the write. Never add `--trust-flash-content` or disable
+verification. Although the wrapper records `boot_app0_flashed.bin`, it always
+passes `skip` for `boot_app0.bin` so the OTA-slot selector is fully rewritten.
+
+The installed CLI/platform behavior was observed without a device:
+
+| Action | Role build directory | Reference result | Next serial upload |
+|---|---|---|---|
+| Fresh worktree | absent | none | full |
+| First successful upload without references | present | saves all four | subsequent upload can be differential |
+| `just esp cook <role>` | retained | existing references unchanged | differential remains available |
+| Successful repeat upload | retained | refreshes all four | differential remains available |
+| Failed upload | retained | existing references unchanged; none created on first failure | prior state remains |
+| `just esp cook-clean <role>` | recreated by Arduino CLI | references removed | full |
+| `just esp clean <role>` | removed | references removed | full |
+| Manual deletion of ignored build state | absent | references removed | full |
+
+Reference files describe the last successful serial upload from that role build
+path. Do not treat them as a backup or copy them between devices. An OTA update,
+unknown device state, fresh checkout, or intentionally removed build state
+requires the verified full-write fallback. The private 4 MiB backup remains the
+recovery artifact.
+
 ## Measured feedback loop
 
-A representative sketch using Wi-Fi, TLS, HTTP, and SPIFFS produced a 910 KB application on this Ryzen 7 8700G host. Arduino CLI 1.4.1 measured:
+Merged firmware on this Ryzen 7 8700G host with Arduino CLI 1.4.1 measured:
 
-| Operation | Wall time |
-|---|---:|
-| Cold build | 17.97 s |
-| Unchanged incremental build | 5.44 s |
-| One source change, incremental build | 5.54 s |
+| Role | Clean build | Unchanged incremental | Application image |
+|---|---:|---:|---:|
+| gateway | 21.24 s | 6.57 s | 1,124,912 B |
+| station | 9.72 s | 3.41 s | 328,448 B |
 
-These are synthetic toolchain measurements; benchmark the migrated gateway source before optimizing further.
+A device-free comparison found that a representative same-length one-character
+source edit changed 66 bytes across two 4 KiB application sectors for each
+role. That is a best case, not a promise for size-changing edits, but it shows
+why retaining the platform's reference files can materially reduce serial
+transfer.
 
-The existing gateway image is approximately 1.14 MB and deflates to about 726 KB. At 115200 baud, UART framing makes roughly 63 seconds the payload-only lower bound, before erase, protocol, bootloader, and reset overhead. Expect approximately 70–90 seconds for a real serial upload and roughly 75–100 seconds for an incremental edit-build-upload cycle. This estimate must be replaced with a measured upload time once source is available.
+At 115200 baud, a full gateway upload is still expected to dominate the loop.
+Exact full, unchanged, small-edit, and size-changing upload timings must be
+measured only after PKM task `2026-09-04-T0001` approves a hardware release.
 
 The CP2102 and ESP32 support faster rates. Removing two USB hub tiers improved short transfers: three 64 KiB reads passed with matching checksums at each of 115200, 230400, 460800, and 921600. Sustained 1.25 MiB qualification was different: 921600, 460800, and 230400 each stopped mid-transfer, while 115200 passed twice with matching checksums in approximately 122 seconds per read. Therefore 115200 remains the only qualified safe upload rate.
 
@@ -111,7 +175,7 @@ Re-evaluate PlatformIO or native ESP-IDF only if the recovered source exposes co
 ## Dependencies and local configuration
 
 Each role has a `sketch.yaml` profile that pins Arduino-ESP32 3.3.11 and its
-indexed library versions. `just cook gateway|station` uses that profile and may
+indexed library versions. `just esp cook gateway|station` uses that profile and may
 download missing pinned packages.
 
 The radio is the older **Seeed Grove LoRa Radio 433MHz/868MHz** with a UART-to-SPI

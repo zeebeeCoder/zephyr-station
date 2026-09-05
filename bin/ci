@@ -19,6 +19,9 @@ npm run test:unit
 echo "→ Running deterministic private deployment preflight tests..."
 ../bin/test-deploy-preflight
 
+echo "→ Running deterministic firmware command tests..."
+../bin/test-firmware-commands
+
 echo "→ Running deterministic backup/restore script tests..."
 ../bin/test-backup-scripts
 

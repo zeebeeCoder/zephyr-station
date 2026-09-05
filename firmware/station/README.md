@@ -8,7 +8,7 @@ a 24-byte weather packet over 868 MHz LoRa; and uses deep sleep between cycles.
 ## Build and dependencies
 
 ```sh
-just cook station
+just esp cook station
 ```
 
 Compilation is supported, but deployment remains default-deny pending PKM task
