@@ -20,7 +20,7 @@ Usage: bin/firmware <doctor|identify|backup|compile|upload|monitor|clean> [gatew
   identify              Read chip and flash identity without changing flash
   backup                Create a private, byte-for-byte 4 MiB flash backup
   compile <role>         Compile firmware/gateway or firmware/station
-  upload <role>          Compile, verify a backup exists, then upload
+  upload <role>          Compile, report the serial plan/time, then upload
   monitor                Open a 115200-baud serial monitor without toggling reset
   clean <role>           Remove role build output and fast-reflash references
 
@@ -153,6 +153,48 @@ clean_role() {
   echo "Removed build/firmware/$role, including fast-reflash references"
 }
 
+report_upload_plan() {
+  local role=$1 build_path reference count=0
+  local -a references
+  build_path="$REPO_ROOT/build/firmware/$role"
+  references=(
+    "$build_path/$role.ino.bootloader_flashed.bin"
+    "$build_path/$role.ino.partitions_flashed.bin"
+    "$build_path/$role.ino_flashed.bin"
+  )
+  for reference in "${references[@]}"; do
+    [ -f "$reference" ] && count=$((count + 1))
+  done
+
+  if [ "$count" -eq 0 ]; then
+    echo "Serial upload plan: full expected for $role (no reusable references in build/firmware/$role)"
+  elif [ "$count" -eq "${#references[@]}" ]; then
+    echo "Serial upload plan: differential expected for $role ($count/3 reusable references; boot_app0.bin is always written)"
+  else
+    echo "Serial upload plan: differential expected for $role ($count/3 reusable references; missing images are fully written; boot_app0.bin is always written)"
+  fi
+}
+
+run_serial_upload() {
+  local role=$1 start_ms end_ms elapsed_ms status=0
+  report_upload_plan "$role"
+  echo "Serial upload: starting $role at 115200 baud"
+  start_ms=$(date +%s%3N)
+  arduino-cli upload --verify --fqbn "$FQBN" --port "$PORT" \
+    --build-path "$REPO_ROOT/build/firmware/$role" "$(sketch_dir "$role")" || status=$?
+  end_ms=$(date +%s%3N)
+  elapsed_ms=$((end_ms - start_ms))
+  [ "$elapsed_ms" -ge 0 ] || elapsed_ms=0
+  if [ "$status" -eq 0 ]; then
+    printf 'Serial upload result: success in %d.%03ds\n' \
+      "$((elapsed_ms / 1000))" "$((elapsed_ms % 1000))"
+  else
+    printf 'Serial upload result: failed (exit %d) after %d.%03ds\n' \
+      "$status" "$((elapsed_ms / 1000))" "$((elapsed_ms % 1000))" >&2
+  fi
+  return "$status"
+}
+
 action=${1:-}
 case "$action" in
   doctor)
@@ -248,8 +290,7 @@ case "$action" in
     sha256sum --check --status "$latest.sha256" || fail "Latest flash backup checksum failed"
     require_deployable_config "$role"
     compile_role "$role"
-    arduino-cli upload --verify --fqbn "$FQBN" --port "$PORT" \
-      --build-path "$REPO_ROOT/build/firmware/$role" "$(sketch_dir "$role")"
+    run_serial_upload "$role"
     ;;
   monitor)
     require_command arduino-cli

@@ -135,6 +135,24 @@ unknown device state, fresh checkout, or intentionally removed build state
 requires the verified full-write fallback. The private 4 MiB backup remains the
 recovery artifact.
 
+After every pre-upload guard and compilation succeeds, `deliver` reports the
+expected plan immediately before invoking Arduino CLI. The expectation is based
+only on reusable local references; esptool's device comparison and automatic
+fallback remain authoritative. Typical messages are:
+
+```text
+Serial upload plan: full expected for gateway (no reusable references in build/firmware/gateway)
+Serial upload plan: differential expected for gateway (3/3 reusable references; boot_app0.bin is always written)
+Serial upload plan: differential expected for gateway (1/3 reusable references; missing images are fully written; boot_app0.bin is always written)
+Serial upload: starting gateway at 115200 baud
+Serial upload result: success in 12.345s
+Serial upload result: failed (exit 2) after 1.234s
+```
+
+Only one plan and one result apply to an invocation. Arduino/esptool output
+remains unmodified between them. Failure preserves Arduino CLI's exit status;
+the installed wrapper updates references only after success.
+
 ## Measured feedback loop
 
 Merged firmware on this Ryzen 7 8700G host with Arduino CLI 1.4.1 measured:
