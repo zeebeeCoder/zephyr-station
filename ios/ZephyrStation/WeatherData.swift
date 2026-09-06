@@ -20,7 +20,7 @@ struct WeatherResponse: Codable {
         let humidityPct: Double
         let pressureHpa: Double
         let windSpeedMs: Double?
-        let gasDensity: Double?
+        let gasResistanceKiloOhms: Double?
         let pm1: Int?
         let pm25: Int?
         let pm10: Int?
@@ -30,7 +30,7 @@ struct WeatherResponse: Codable {
             case humidityPct = "humidity_pct"
             case pressureHpa = "pressure_hpa"
             case windSpeedMs = "wind_speed_ms"
-            case gasDensity = "gas_density"
+            case gasResistanceKiloOhms = "gas_density"
             case pm1, pm25, pm10
         }
     }

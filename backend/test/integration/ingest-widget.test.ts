@@ -71,6 +71,54 @@ describe('POST /v1/ingest', () => {
     await app.close();
   });
 
+  it('accepts and returns the station gas-resistance range', async () => {
+    const app = buildIntegrationApp();
+    const payload = {
+      ...validPayload,
+      timestamp: new Date().toISOString(),
+      readings: {
+        ...validPayload.readings,
+        gas_density: 6204,
+      },
+    };
+
+    const ingest = await app.inject({
+      method: 'POST',
+      url: '/v1/ingest',
+      headers: { 'x-api-key': API_KEY, 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    expect(ingest.statusCode).toBe(200);
+
+    const widget = await app.inject({
+      method: 'GET',
+      url: `/v1/widget?device_id=${DEVICE_ID}`,
+    });
+    expect(widget.statusCode).toBe(200);
+    expect(JSON.parse(widget.body).readings.gas_density).toBe(6204);
+    await app.close();
+  });
+
+  it('rejects gas resistance outside the station wire range', async () => {
+    const app = buildIntegrationApp();
+    const payload = {
+      ...validPayload,
+      readings: {
+        ...validPayload.readings,
+        gas_density: 65536,
+      },
+    };
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/ingest',
+      headers: { 'x-api-key': API_KEY, 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body).error.message).toBe('Validation failed');
+    await app.close();
+  });
+
   it('rejects with 403 when API key is wrong', async () => {
     const app = buildIntegrationApp();
     const res = await app.inject({

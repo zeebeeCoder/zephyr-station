@@ -42,7 +42,7 @@ enum HistoryMetric: String, CaseIterable, Identifiable {
         case .pm10: "PM10"
         case .pm1: "PM1"
         case .windSpeed: "Wind"
-        case .gas: "Gas/VOC"
+        case .gas: "Gas resistance"
         case .battery: "Battery"
         }
     }

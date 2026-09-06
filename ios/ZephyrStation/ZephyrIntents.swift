@@ -14,7 +14,7 @@ enum ZephyrMetric: String, AppEnum {
         .pm10:        "PM10",
         .pm1:         "PM1",
         .wind:        "Wind Speed",
-        .gas:         "Air Quality",
+        .gas:         "Gas Resistance",
         .battery:     "Battery",
     ]
 
@@ -27,7 +27,7 @@ enum ZephyrMetric: String, AppEnum {
         case .pm10:        return r.pm10.map { "\($0) micrograms per cubic meter" } ?? "no data"
         case .pm1:         return r.pm1.map  { "\($0) micrograms per cubic meter" } ?? "no data"
         case .wind:        return r.windSpeedMs.map { String(format: "%.1f meters per second", $0) } ?? "no data"
-        case .gas:         return r.gasDensity.map  { String(format: "%.0f kilo-ohms", $0) } ?? "no data"
+        case .gas:         return r.gasResistanceKiloOhms.map { GasResistanceFormatting.spoken(kiloOhms: $0) } ?? "no data"
         case .battery:     return String(format: "%.2f volts", meta.batteryV)
         }
     }
@@ -41,7 +41,7 @@ enum ZephyrMetric: String, AppEnum {
         case .pm10:        return "PM10"
         case .pm1:         return "PM1"
         case .wind:        return "wind speed"
-        case .gas:         return "air quality"
+        case .gas:         return "gas resistance"
         case .battery:     return "battery"
         }
     }

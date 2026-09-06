@@ -4,7 +4,8 @@ const readingsSchema = z.object({
   temperature_c: z.number().min(-50).max(60),
   humidity_pct: z.number().min(0).max(100),
   pressure_hpa: z.number().min(800).max(1200),
-  gas_density: z.number().min(0).max(1000).optional(),
+  // Legacy field name: this is raw BME680 gas resistance in kΩ.
+  gas_density: z.number().min(0).max(65535).optional(),
   pm1: z.number().int().min(0).max(1000).optional(),
   pm25: z.number().int().min(0).max(1000),
   pm10: z.number().int().min(0).max(1000),

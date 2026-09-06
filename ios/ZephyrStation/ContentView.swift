@@ -95,9 +95,9 @@ struct LiveView: View {
                                         icon: "aqi.high",
                                         metric: .pm1, onTap: { selectedMetric = $0 })
                                 }
-                                if let gas = weather.readings.gasDensity {
-                                    ReadingCard(label: "Gas/VOC",
-                                        value: String(format: "%.0f", gas),
+                                if let gas = weather.readings.gasResistanceKiloOhms {
+                                    ReadingCard(label: "Gas resistance",
+                                        value: GasResistanceFormatting.display(kiloOhms: gas),
                                         icon: "carbon.dioxide.cloud",
                                         metric: .gas, onTap: { selectedMetric = $0 })
                                 }
@@ -461,12 +461,16 @@ struct MiniChartSheet: View {
                 ProgressView()
                 Spacer()
             } else if let response, !response.points.isEmpty {
+                let displayInMegaohms = metric == .gas && response.points.contains { $0.v >= 1_000 }
+                let displayUnit = displayInMegaohms ? "MΩ" : response.unit
+                let displayValue: (Double) -> Double = { displayInMegaohms ? $0 / 1_000 : $0 }
+
                 // Tooltip
                 if let point = selectedPoint {
                     HStack(spacing: 6) {
                         Text(formatTime(point.t))
                         Text("\u{2022}")
-                        Text(String(format: "%.1f %@", point.v, response.unit))
+                        Text(String(format: "%.1f %@", displayValue(point.v), displayUnit))
                             .bold()
                     }
                     .font(.system(size: 13, weight: .medium, design: .monospaced))
@@ -483,7 +487,7 @@ struct MiniChartSheet: View {
                 Chart(response.points) { point in
                     LineMark(
                         x: .value("Time", point.t),
-                        y: .value(response.unit, point.v)
+                        y: .value(displayUnit, displayValue(point.v))
                     )
                     .foregroundStyle(theme.accent)
                     .interpolationMethod(.catmullRom)
@@ -491,7 +495,7 @@ struct MiniChartSheet: View {
 
                     AreaMark(
                         x: .value("Time", point.t),
-                        y: .value(response.unit, point.v)
+                        y: .value(displayUnit, displayValue(point.v))
                     )
                     .foregroundStyle(
                         .linearGradient(
@@ -504,7 +508,7 @@ struct MiniChartSheet: View {
                     if let sel = selectedPoint, sel.t == point.t {
                         PointMark(
                             x: .value("Time", point.t),
-                            y: .value(response.unit, point.v)
+                            y: .value(displayUnit, displayValue(point.v))
                         )
                         .foregroundStyle(theme.accent)
                         .symbolSize(50)
@@ -535,13 +539,13 @@ struct MiniChartSheet: View {
                 }
 
                 // Stats
-                let values = response.points.map(\.v)
+                let values = response.points.map { displayValue($0.v) }
                 HStack {
-                    miniStat("MIN", String(format: "%.1f", values.min() ?? 0), response.unit)
+                    miniStat("MIN", String(format: "%.1f", values.min() ?? 0), displayUnit)
                     Spacer()
-                    miniStat("AVG", String(format: "%.1f", values.reduce(0, +) / Double(values.count)), response.unit)
+                    miniStat("AVG", String(format: "%.1f", values.reduce(0, +) / Double(values.count)), displayUnit)
                     Spacer()
-                    miniStat("MAX", String(format: "%.1f", values.max() ?? 0), response.unit)
+                    miniStat("MAX", String(format: "%.1f", values.max() ?? 0), displayUnit)
                 }
             } else {
                 Spacer()

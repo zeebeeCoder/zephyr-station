@@ -173,6 +173,7 @@ struct ReceivedData {
 #define FORECAST_DAYS 3
 #define FORECAST_HOURS 4       // Next 4 half-hour slots (covers ~2 hours)
 #define FORECAST_INTERVAL_MS 1800000  // Fetch every 30 minutes
+#define GAS_RESISTANCE_MAX_KOHMS 65535.0f  // uint16_t station radio field
 
 struct ForecastDay {
   char date[11];       // "2026-03-30"
@@ -206,6 +207,16 @@ const char* getAirQualityLevel(uint16_t pm25) {
   if (pm25 <= 150) return "Unhealthy";
   if (pm25 <= 250) return "Very Bad";
   return "Hazardous";
+}
+
+void formatGasResistance(float kiloOhms, char* output, size_t outputSize, bool compact = false) {
+  if (!isfinite(kiloOhms) || kiloOhms < 0.0f) {
+    snprintf(output, outputSize, "--");
+  } else if (kiloOhms >= 1000.0f) {
+    snprintf(output, outputSize, compact ? "%.1fM" : "%.1f MOhm", kiloOhms / 1000.0f);
+  } else {
+    snprintf(output, outputSize, compact ? "%.0fk" : "%.0f kOhm", kiloOhms);
+  }
 }
 
 const char* getAirQualityShort(uint16_t pm25) {
@@ -359,10 +370,12 @@ void uploadToCloud() {
   readings["humidity_pct"] = rxData.humidity;
   readings["pressure_hpa"] = rxData.pressure;
   if (isfinite(rxData.gasResistance) &&
-      rxData.gasResistance >= 0.0f && rxData.gasResistance <= 1000.0f) {
+      rxData.gasResistance >= 0.0f &&
+      rxData.gasResistance <= GAS_RESISTANCE_MAX_KOHMS) {
+    // Legacy API key; the value is raw BME680 gas resistance in kOhms.
     readings["gas_density"] = rxData.gasResistance;
   } else {
-    Serial.println("  gas_density omitted (invalid or outside API range)");
+    Serial.println("  gas resistance omitted (invalid or outside API range)");
   }
   readings["pm1"] = rxData.pm1_0;
   readings["pm25"] = rxData.pm2_5;
@@ -829,7 +842,7 @@ void displayPageAirStatic() {
   tft.setCursor(6, 124);
   tft.print("STATUS");
   tft.setCursor(218, 124);
-  tft.print("GAS");
+  tft.print("GAS RES.");
 
   // Units
   tft.setTextColor(COLOR_DIM);
@@ -870,19 +883,21 @@ void displayPageAirDynamic() {
   tft.setTextColor(getAirQualityColor(rxData.pm2_5));
   tft.print(getAirQualityLevel(rxData.pm2_5));
 
-  // Gas value
+  // Raw BME680 gas resistance, compact enough for the narrow column.
+  char gasResistance[12];
+  formatGasResistance(rxData.gasResistance, gasResistance, sizeof(gasResistance), true);
   tft.fillRect(216, 134, 100, 32, COLOR_BG);
   tft.setTextColor(COLOR_TEXT);
   tft.setTextSize(3);
   tft.setCursor(218, 138);
-  tft.printf("%.0f", rxData.gasResistance);
+  tft.print(gasResistance);
 
   // Footer
   tft.fillRect(2, 174, 316, SCREEN_HEIGHT - 175, COLOR_BG);
   tft.setTextSize(1);
   tft.setTextColor(COLOR_DIM);
   tft.setCursor(4, 178);
-  tft.printf("#%d  Gas unit: kOhm", rxData.packetCounter);
+  tft.printf("#%d  BME680 resistance", rxData.packetCounter);
   if (lastPacketTime > 0) {
     unsigned long secsAgo = (millis() - lastPacketTime) / 1000;
     tft.setCursor(250, 178);
@@ -923,14 +938,12 @@ void displayPageStatusStatic() {
   tft.setCursor(6, 130);
   tft.print("PRESSURE");
   tft.setCursor(166, 130);
-  tft.print("GAS");
+  tft.print("GAS RESISTANCE");
 
   // Static units
   tft.setTextColor(COLOR_DIM);
   tft.setCursor(6, 168);
   tft.print("hPa");
-  tft.setCursor(166, 168);
-  tft.print("kOhm");
 }
 
 void displayPageStatusDynamic() {
@@ -967,11 +980,13 @@ void displayPageStatusDynamic() {
   tft.setCursor(6, 146);
   tft.printf("%.0f", rxData.pressure);
 
-  tft.fillRect(163, 144, 153, 20, COLOR_BG);
+  char gasResistance[16];
+  formatGasResistance(rxData.gasResistance, gasResistance, sizeof(gasResistance));
+  tft.fillRect(163, 144, 153, 24, COLOR_BG);
   tft.setTextColor(COLOR_TEXT);
-  tft.setTextSize(3);
+  tft.setTextSize(2);
   tft.setCursor(166, 146);
-  tft.printf("%.0f", rxData.gasResistance);
+  tft.print(gasResistance);
 
   // Footer
   tft.fillRect(2, 182, 316, SCREEN_HEIGHT - 183, COLOR_BG);
@@ -1524,7 +1539,9 @@ void printWeatherData() {
   Serial.printf("Temperature:    %.1f C\n", rxData.temperature);
   Serial.printf("Humidity:       %.1f %%\n", rxData.humidity);
   Serial.printf("Pressure:       %.1f hPa\n", rxData.pressure);
-  Serial.printf("Gas Resistance: %.0f kOhms\n", rxData.gasResistance);
+  char gasResistance[16];
+  formatGasResistance(rxData.gasResistance, gasResistance, sizeof(gasResistance));
+  Serial.printf("Gas Resistance: %s\n", gasResistance);
   Serial.printf("Wind Speed:     %.1f m/s (%.1f km/h)\n", rxData.windSpeed, msToKmh(rxData.windSpeed));
   Serial.printf("PM1.0: %d | PM2.5: %d | PM10: %d ug/m3\n", rxData.pm1_0, rxData.pm2_5, rxData.pm10);
   Serial.printf("Air Quality:    %s\n", getAirQualityLevel(rxData.pm2_5));

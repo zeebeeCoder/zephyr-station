@@ -33,7 +33,7 @@ The complete HTTP request body must be no larger than 4096 bytes. Ingest is limi
     "temperature_c": 5.2,
     "humidity_pct": 78,
     "pressure_hpa": 1013,
-    "gas_density": 150.5,
+    "gas_density": 6204,
     "pm1": 5,
     "pm25": 12,
     "pm10": 18,
@@ -65,10 +65,12 @@ The complete HTTP request body must be no larger than 4096 bytes. Ingest is limi
 
 | Field | Type | Allowed value |
 |---|---|---|
-| `readings.gas_density` | number | 0 to 1000 |
+| `readings.gas_density` | number | 0 to 65535 kΩ |
 | `readings.pm1` | integer | 0 to 1000 µg/m³ |
 | `readings.wind_speed_ms` | number | 0 to 100 m/s |
 | `meta.system_amps` | number | 0 to 5 A |
+
+`gas_density` is retained as a legacy API/database key, but its value is the BME680's raw **gas resistance in kΩ**, not a density or calibrated air-quality score. Keep kΩ as the transmitted/storage unit; presentation layers should show values at or above 1000 kΩ in MΩ (for example, `6204` as `6.2 MΩ`).
 
 Unknown schema behavior should not be relied on; send only documented fields.
 
