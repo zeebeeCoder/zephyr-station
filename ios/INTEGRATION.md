@@ -136,11 +136,11 @@ Run these from the same network path that the device will use:
 ```bash
 curl --fail --show-error https://omarchy.tail4e6e78.ts.net/up
 curl --fail --show-error https://omarchy.tail4e6e78.ts.net/ready
-curl --fail --show-error \
+curl --include \
   'https://omarchy.tail4e6e78.ts.net/v1/widget?device_id=mstation'
 ```
 
-Do not use `--insecure` or a raw-IP URL. A remote Mac needs the household WireGuard route or its separately approved private Tailscale administration path. A 404 from the widget route means the API is reachable but no `mstation` reading exists yet.
+Do not use `--insecure` or a raw-IP URL. A remote Mac needs the household WireGuard route or its separately approved private Tailscale administration path. Before the first `mstation` reading, expect the widget request to show HTTP 404: that proves the API is reachable but the station data is not present. After firmware ingestion begins, repeat it with `curl --fail-with-body` and require HTTP 200.
 
 ## Build and signing
 
@@ -215,7 +215,7 @@ Disable Tailscale on the phone while proving the WireGuard cases. Force-close/re
 These are not credentials, but they should be reviewed on the Mac before release:
 
 1. `WeatherService` currently does not inspect `HTTPURLResponse.statusCode` before decoding. A 4xx/5xx response becomes a generic decoding/load error.
-2. History timestamps contain a UTC `Z`, but the formatter currently sets `TimeZone.current`. Change the decoding path to UTC or ISO-8601 and add a decoder test before trusting chart times outside UTC.
+2. History timestamps contain a UTC `Z`, but the formatter currently sets `TimeZone.current`. Parse backend timestamps as UTC with an ISO-8601 strategy that accepts fractional seconds, and add decoder fixtures before trusting chart times outside UTC; merely retaining the exact-three-fraction formatter remains brittle.
 3. Widget fetch failure silently displays synthetic placeholder data. Add an explicit unavailable/stale state so network failure cannot look like a real reading.
 4. The device ID and API URL are compile-time constants. That is acceptable for one household station, but any future station selection should use a reviewed configuration model rather than scattered literals.
 5. Background widget refresh and Live Activity polling depend on iOS scheduling and WireGuard availability. Validate on the actual family devices; do not publish the API to work around VPN scheduling.
