@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir=$(cd "$(dirname "$0")" && pwd)
+repo_root=$(cd "$script_dir/.." && pwd)
+secrets_file=${ZEPHYR_KAMAL_SECRETS_FILE:-$repo_root/.kamal/secrets}
 container=${ZEPHYR_POSTGRES_CONTAINER:-zephyr-postgres}
 database_user=${ZEPHYR_POSTGRES_USER:-zephyr}
 database_name=${ZEPHYR_POSTGRES_DATABASE:-zephyr}
@@ -12,6 +15,23 @@ for command in docker rainfrog; do
     exit 1
   fi
 done
+
+deployment_database_url=
+credential_message="enter POSTGRES_PASSWORD when prompted"
+if [ -r "$secrets_file" ]; then
+  # shellcheck source=/dev/null
+  source "$secrets_file"
+  if [ -z "${DATABASE_URL:-}" ]; then
+    echo "ERROR: DATABASE_URL is missing from $secrets_file" >&2
+    exit 1
+  fi
+  deployment_database_url=$DATABASE_URL
+  credential_message="using the private local deployment credential"
+fi
+
+# Do not leak unrelated deployment secrets into Rainfrog.
+unset KAMAL_REGISTRY_PASSWORD POSTGRES_PASSWORD INGEST_API_KEY DATABASE_URL PGPASSWORD \
+  ZEPHYR_TLS_CERTIFICATE_PEM ZEPHYR_TLS_PRIVATE_KEY_PEM
 
 if ! running=$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null); then
   echo "ERROR: PostgreSQL container not found: $container" >&2
@@ -30,7 +50,19 @@ if [ -z "$database_ip" ]; then
   exit 1
 fi
 
-echo "Opening $database_name in Rainfrog; enter POSTGRES_PASSWORD when prompted."
+echo "Opening $database_name in Rainfrog; $credential_message."
+if [ -n "$deployment_database_url" ]; then
+  docker_host="@$container:"
+  database_url=${deployment_database_url/"$docker_host"/"@$database_ip:"}
+  if [ "$database_url" = "$deployment_database_url" ]; then
+    echo "ERROR: DATABASE_URL does not target the expected container: $container" >&2
+    exit 1
+  fi
+  export DATABASE_URL=$database_url
+  unset deployment_database_url database_url
+  exec rainfrog
+fi
+
 exec rainfrog \
   --driver postgres \
   --host "$database_ip" \
