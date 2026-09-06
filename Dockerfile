@@ -9,7 +9,9 @@ RUN npm ci
 COPY backend/tsconfig.json ./
 COPY backend/src ./src
 RUN npm run build
-RUN mkdir -p dist/db/migrations && cp src/db/migrations/*.sql dist/db/migrations/
+RUN mkdir -p dist/db/migrations && \
+    cp src/db/migrations/*.sql dist/db/migrations/ && \
+    chmod 0644 dist/db/migrations/*.sql
 
 # ── Production stage ─────────────────────────────────────────────────────────
 FROM node:22-alpine AS production
