@@ -49,6 +49,7 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <math.h>
 #include <time.h>
 #include "config.h"
 
@@ -357,7 +358,12 @@ void uploadToCloud() {
   readings["temperature_c"] = rxData.temperature;
   readings["humidity_pct"] = rxData.humidity;
   readings["pressure_hpa"] = rxData.pressure;
-  readings["gas_density"] = rxData.gasResistance;
+  if (isfinite(rxData.gasResistance) &&
+      rxData.gasResistance >= 0.0f && rxData.gasResistance <= 1000.0f) {
+    readings["gas_density"] = rxData.gasResistance;
+  } else {
+    Serial.println("  gas_density omitted (invalid or outside API range)");
+  }
   readings["pm1"] = rxData.pm1_0;
   readings["pm25"] = rxData.pm2_5;
   readings["pm10"] = rxData.pm10;
