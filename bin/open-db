@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+container=${ZEPHYR_POSTGRES_CONTAINER:-zephyr-postgres}
+database_user=${ZEPHYR_POSTGRES_USER:-zephyr}
+database_name=${ZEPHYR_POSTGRES_DATABASE:-zephyr}
+database_port=${ZEPHYR_POSTGRES_PORT:-5432}
+
+for command in docker rainfrog; do
+  if ! command -v "$command" >/dev/null 2>&1; then
+    echo "ERROR: Required command not found: $command" >&2
+    exit 1
+  fi
+done
+
+if ! running=$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null); then
+  echo "ERROR: PostgreSQL container not found: $container" >&2
+  exit 1
+fi
+if [ "$running" != true ]; then
+  echo "ERROR: PostgreSQL container is not running: $container" >&2
+  exit 1
+fi
+
+database_ip=$(docker inspect \
+  --format '{{range .NetworkSettings.Networks}}{{println .IPAddress}}{{end}}' \
+  "$container" | awk 'NF { print; exit }')
+if [ -z "$database_ip" ]; then
+  echo "ERROR: PostgreSQL container has no reachable Docker network address: $container" >&2
+  exit 1
+fi
+
+echo "Opening $database_name in Rainfrog; enter POSTGRES_PASSWORD when prompted."
+exec rainfrog \
+  --driver postgres \
+  --host "$database_ip" \
+  --port "$database_port" \
+  --username "$database_user" \
+  --database "$database_name"
