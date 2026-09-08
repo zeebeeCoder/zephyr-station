@@ -1,5 +1,9 @@
 import { FastifyInstance } from 'fastify';
 
+// The station reports every 15 minutes. Allow five minutes for radio/network
+// jitter before declaring it offline.
+const OFFLINE_AFTER_SECONDS = 20 * 60;
+
 export async function widgetRoutes(app: FastifyInstance) {
   app.get('/widget', async (request, reply) => {
     const { device_id } = request.query as { device_id?: string };
@@ -53,7 +57,7 @@ export async function widgetRoutes(app: FastifyInstance) {
           system_amps: num(r.system_amps),
           rssi: r.rssi,
         },
-        station_status: dataAgeSeconds < 600 ? 'online' : 'offline',
+        station_status: dataAgeSeconds < OFFLINE_AFTER_SECONDS ? 'online' : 'offline',
         data_age_seconds: dataAgeSeconds,
       };
     } catch (err) {

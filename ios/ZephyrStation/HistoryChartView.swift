@@ -2,96 +2,258 @@ import SwiftUI
 import Charts
 
 struct HistoryChartView: View {
-    @State private var metric: HistoryMetric = .temperature
     @State private var range: HistoryRange = .day
+    @Environment(\.theme) private var theme
+
+    private let sections: [(title: String, metrics: [HistoryMetric])] = [
+        ("WEATHER", [.temperature, .humidity, .pressure, .windSpeed]),
+        ("AIR QUALITY", [.pm1, .pm25, .pm10, .gas]),
+        ("STATION", [.battery]),
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Picker("Range", selection: $range) {
+                ForEach(HistoryRange.allCases, id: \.self) { item in
+                    Text(item.rawValue).tag(item)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityLabel("History range")
+
+            ForEach(sections, id: \.title) { section in
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(section.title)
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .tracking(2)
+                        .padding(.horizontal, 4)
+
+                    ForEach(section.metrics) { metric in
+                        MetricHistoryCard(metric: metric, range: range)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct MetricHistoryCard: View {
+    let metric: HistoryMetric
+    let range: HistoryRange
+
     @State private var response: HistoryResponse?
-    @State private var isLoading = false
+    @State private var isLoading = true
     @State private var errorMessage: String?
+    @State private var showsDetail = false
+    @Environment(\.theme) private var theme
+
+    private let service = WeatherService()
+
+    var body: some View {
+        Button {
+            guard response?.points.isEmpty == false else { return }
+            showsDetail = true
+        } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 10) {
+                    Image(systemName: metric.iconName)
+                        .font(.title3)
+                        .foregroundStyle(theme.accent)
+                        .frame(width: 26)
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(metric.accessibilityName)
+                            .font(.system(.subheadline, design: .monospaced, weight: .semibold))
+                        if let response, let latest = response.points.last {
+                            Text("Latest \(metric.format(latest.v, unit: response.unit))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Spacer()
+
+                    if response?.points.isEmpty == false {
+                        Image(systemName: "chevron.right")
+                            .font(.caption.bold())
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+
+                if isLoading {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, minHeight: 90)
+                } else if let response, !response.points.isEmpty {
+                    compactChart(response)
+                    statsRow(response)
+                } else {
+                    HStack(spacing: 8) {
+                        Image(systemName: errorMessage == nil ? "chart.line.downtrend.xyaxis" : "exclamationmark.triangle")
+                        Text(errorMessage ?? "No data in this period")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(errorMessage == nil ? Color.secondary : Color.red)
+                    .frame(maxWidth: .infinity, minHeight: 90)
+                }
+            }
+            .padding(14)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+            .contentShape(RoundedRectangle(cornerRadius: 16))
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens a detailed interactive chart")
+        .task(id: range.rawValue) {
+            await loadData()
+        }
+        .sheet(isPresented: $showsDetail) {
+            MetricDetailChart(metric: metric, range: range)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+    }
+
+    @ViewBuilder
+    private func compactChart(_ response: HistoryResponse) -> some View {
+        Chart(response.points) { point in
+            LineMark(
+                x: .value("Time", point.t),
+                y: .value(response.unit, point.v)
+            )
+            .foregroundStyle(theme.accent)
+            .interpolationMethod(.catmullRom)
+            .lineStyle(StrokeStyle(lineWidth: 2))
+
+            AreaMark(
+                x: .value("Time", point.t),
+                y: .value(response.unit, point.v)
+            )
+            .foregroundStyle(
+                .linearGradient(
+                    colors: [theme.accent.opacity(0.18), theme.accent.opacity(0.01)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .interpolationMethod(.catmullRom)
+        }
+        .frame(height: 90)
+        .chartXAxis(.hidden)
+        .chartYAxis(.hidden)
+        .accessibilityHidden(true)
+    }
+
+    private func statsRow(_ response: HistoryResponse) -> some View {
+        let values = response.points.map(\.v)
+        let average = values.reduce(0, +) / Double(values.count)
+
+        return HStack {
+            CompactStat("MIN", metric.format(values.min() ?? 0, unit: response.unit))
+            Spacer()
+            CompactStat("AVG", metric.format(average, unit: response.unit))
+            Spacer()
+            CompactStat("MAX", metric.format(values.max() ?? 0, unit: response.unit))
+        }
+    }
+
+    @MainActor
+    private func loadData() async {
+        isLoading = true
+        errorMessage = nil
+
+        do {
+            let result = try await service.fetchHistory(metric: metric, range: range)
+            guard !Task.isCancelled else { return }
+            response = result
+        } catch is CancellationError {
+            return
+        } catch {
+            guard !Task.isCancelled else { return }
+            response = nil
+            errorMessage = error.localizedDescription
+        }
+
+        isLoading = false
+    }
+}
+
+private struct CompactStat: View {
+    let label: String
+    let value: String
+
+    init(_ label: String, _ value: String) {
+        self.label = label
+        self.value = value
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+    }
+}
+
+private struct MetricDetailChart: View {
+    let metric: HistoryMetric
+    let range: HistoryRange
+
+    @State private var response: HistoryResponse?
     @State private var selectedDate: Date?
+    @State private var isLoading = true
+    @State private var errorMessage: String?
     @Environment(\.theme) private var theme
 
     private let service = WeatherService()
 
     private var selectedPoint: HistoryResponse.DataPoint? {
         guard let selectedDate, let points = response?.points, !points.isEmpty else { return nil }
-        return points.min(by: {
+        return points.min {
             abs($0.t.timeIntervalSince(selectedDate)) < abs($1.t.timeIntervalSince(selectedDate))
-        })
+        }
     }
 
     var body: some View {
-        VStack(spacing: 12) {
-            // Metric picker
-            Picker("Metric", selection: $metric) {
-                ForEach(HistoryMetric.chartCases, id: \.self) { m in
-                    Text(m.displayName).tag(m)
+        NavigationStack {
+            Group {
+                if isLoading {
+                    ProgressView()
+                } else if let response, !response.points.isEmpty {
+                    chart(response)
+                } else {
+                    ContentUnavailableView(
+                        "No history",
+                        systemImage: "chart.line.downtrend.xyaxis",
+                        description: Text(errorMessage ?? "No data is available for this period.")
+                    )
                 }
             }
-            .pickerStyle(.segmented)
-
-            // Range picker
-            Picker("Range", selection: $range) {
-                ForEach(HistoryRange.allCases, id: \.self) { r in
-                    Text(r.rawValue).tag(r)
-                }
-            }
-            .pickerStyle(.segmented)
-
-            // Chart area
-            if isLoading {
-                ProgressView()
-                    .frame(height: 240)
-            } else if let response, !response.points.isEmpty {
-                chartContent(response: response)
-            } else if let errorMessage {
-                Text(errorMessage)
-                    .foregroundStyle(.red)
-                    .font(.caption)
-                    .frame(height: 240)
-            } else {
-                Text("No data")
-                    .foregroundStyle(.secondary)
-                    .frame(height: 240)
-            }
+            .padding()
+            .navigationTitle(metric.accessibilityName)
         }
-        .padding()
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
-        .onChange(of: metric) { _, _ in
-            selectedDate = nil
-            loadData()
-        }
-        .onChange(of: range) { _, _ in
-            selectedDate = nil
-            loadData()
-        }
-        .task { loadData() }
+        .task { await loadData() }
     }
 
-    // MARK: - Chart
-
     @ViewBuilder
-    private func chartContent(response: HistoryResponse) -> some View {
-        VStack(spacing: 8) {
-            // Tooltip when a point is selected
+    private func chart(_ response: HistoryResponse) -> some View {
+        VStack(spacing: 16) {
             if let point = selectedPoint {
-                HStack(spacing: 6) {
-                    Text(formatTooltipDate(point.t))
-                    Text("\u{2022}")
-                    Text(String(format: "%.1f %@", point.v, response.unit))
-                        .bold()
-                }
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(.ultraThinMaterial, in: Capsule())
+                Text("\(point.t.formatted(date: .abbreviated, time: .shortened))  •  \(metric.format(point.v, unit: response.unit))")
+                    .font(.system(.caption, design: .monospaced, weight: .semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.ultraThinMaterial, in: Capsule())
             } else {
-                Text("Tap chart to inspect")
-                    .font(.system(size: 11, design: .monospaced))
+                Text("Touch and drag to inspect")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
-                    .padding(.vertical, 5)
             }
 
-            // The chart
             Chart(response.points) { point in
                 LineMark(
                     x: .value("Time", point.t),
@@ -99,7 +261,7 @@ struct HistoryChartView: View {
                 )
                 .foregroundStyle(theme.accent)
                 .interpolationMethod(.catmullRom)
-                .lineStyle(StrokeStyle(lineWidth: 2))
+                .lineStyle(StrokeStyle(lineWidth: 2.5))
 
                 AreaMark(
                     x: .value("Time", point.t),
@@ -107,126 +269,62 @@ struct HistoryChartView: View {
                 )
                 .foregroundStyle(
                     .linearGradient(
-                        colors: [theme.accent.opacity(0.2), theme.accent.opacity(0.02)],
+                        colors: [theme.accent.opacity(0.22), theme.accent.opacity(0.02)],
                         startPoint: .top,
                         endPoint: .bottom
                     )
                 )
                 .interpolationMethod(.catmullRom)
 
-                // Highlight selected point
-                if let sel = selectedPoint, sel.t == point.t {
+                if let selectedPoint, selectedPoint.t == point.t {
+                    RuleMark(x: .value("Time", point.t))
+                        .foregroundStyle(theme.accent.opacity(0.4))
                     PointMark(
                         x: .value("Time", point.t),
                         y: .value(response.unit, point.v)
                     )
                     .foregroundStyle(theme.accent)
-                    .symbolSize(50)
-
-                    RuleMark(x: .value("Time", point.t))
-                        .foregroundStyle(theme.accent.opacity(0.3))
-                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                    .symbolSize(60)
                 }
             }
-            .frame(height: 200)
             .chartXSelection(value: $selectedDate)
             .chartXAxis {
                 AxisMarks(values: .automatic(desiredCount: 5)) { value in
                     AxisGridLine()
                     AxisValueLabel {
                         if let date = value.as(Date.self) {
-                            Text(formatAxisLabel(date))
-                                .font(.system(size: 9, design: .monospaced))
+                            Text(axisLabel(date))
                         }
                     }
                 }
             }
-            .chartYAxis {
-                AxisMarks { value in
-                    AxisGridLine()
-                    AxisValueLabel()
-                        .font(.system(size: 9, design: .monospaced))
-                }
+
+            let values = response.points.map(\.v)
+            HStack {
+                CompactStat("MIN", metric.format(values.min() ?? 0, unit: response.unit))
+                Spacer()
+                CompactStat("AVG", metric.format(values.reduce(0, +) / Double(values.count), unit: response.unit))
+                Spacer()
+                CompactStat("MAX", metric.format(values.max() ?? 0, unit: response.unit))
             }
-            .animation(.easeInOut(duration: 0.15), value: selectedDate)
-
-            // Stats row
-            statsRow(from: response.points, unit: response.unit)
         }
     }
 
-    // MARK: - Helpers
-
-    private func loadData() {
-        Task {
-            isLoading = true
-            errorMessage = nil
-            do {
-                response = try await service.fetchHistory(metric: metric, range: range)
-                errorMessage = nil
-            } catch {
-                response = nil
-                errorMessage = error.localizedDescription
-            }
-            isLoading = false
-        }
-    }
-
-    private func formatTooltipDate(_ date: Date) -> String {
-        let f = DateFormatter()
+    private func axisLabel(_ date: Date) -> String {
         switch range {
-        case .day:   f.dateFormat = "HH:mm"
-        case .week:  f.dateFormat = "EEE HH:mm"
-        case .month: f.dateFormat = "d MMM HH:mm"
+        case .day: date.formatted(date: .omitted, time: .shortened)
+        case .week: date.formatted(.dateTime.weekday(.abbreviated))
+        case .month: date.formatted(.dateTime.day().month(.abbreviated))
         }
-        return f.string(from: date)
     }
 
-    private func formatAxisLabel(_ date: Date) -> String {
-        let f = DateFormatter()
-        switch range {
-        case .day:   f.dateFormat = "HH:mm"
-        case .week:  f.dateFormat = "EEE"
-        case .month: f.dateFormat = "d MMM"
+    @MainActor
+    private func loadData() async {
+        do {
+            response = try await service.fetchHistory(metric: metric, range: range)
+        } catch {
+            errorMessage = error.localizedDescription
         }
-        return f.string(from: date)
-    }
-
-    private func statsRow(from points: [HistoryResponse.DataPoint], unit: String) -> some View {
-        let values = points.map(\.v)
-        let mn = values.min() ?? 0
-        let mx = values.max() ?? 0
-        let avg = values.reduce(0, +) / Double(values.count)
-
-        return HStack {
-            StatLabel("MIN", String(format: "%.1f", mn), unit)
-            Spacer()
-            StatLabel("AVG", String(format: "%.1f", avg), unit)
-            Spacer()
-            StatLabel("MAX", String(format: "%.1f", mx), unit)
-        }
-        .font(.system(size: 11, design: .monospaced))
-    }
-}
-
-struct StatLabel: View {
-    let label: String
-    let value: String
-    let unit: String
-
-    init(_ label: String, _ value: String, _ unit: String) {
-        self.label = label
-        self.value = value
-        self.unit = unit
-    }
-
-    var body: some View {
-        VStack(spacing: 2) {
-            Text(label)
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
-                .foregroundStyle(.secondary)
-            Text("\(value) \(unit)")
-                .font(.system(size: 13, weight: .bold, design: .monospaced))
-        }
+        isLoading = false
     }
 }

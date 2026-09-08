@@ -5,6 +5,10 @@ import { getDb } from '../lib/db.mjs';
 
 const logger = new Logger('widget');
 
+// The station reports every 15 minutes. Allow five minutes for radio/network
+// jitter before declaring it offline.
+const OFFLINE_AFTER_SECONDS = 20 * 60;
+
 export const handleWidget = async (event) => {
   const params = event.queryStringParameters || {};
   const { device_id } = params;
@@ -55,7 +59,7 @@ export const handleWidget = async (event) => {
         system_amps: num(r.system_amps),
         rssi: r.rssi,
       },
-      station_status: dataAgeSeconds < 600 ? 'online' : 'offline',
+      station_status: dataAgeSeconds < OFFLINE_AFTER_SECONDS ? 'online' : 'offline',
       data_age_seconds: dataAgeSeconds,
     });
   } catch (err) {

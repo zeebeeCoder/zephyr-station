@@ -244,6 +244,38 @@ describe('GET /v1/widget', () => {
     await app.close();
   });
 
+  it('allows the expected 15-minute reporting interval before going offline', async () => {
+    const app = buildIntegrationApp();
+
+    for (const sample of [
+      { deviceId: 'status-online-station', ageMinutes: 19, expected: 'online' },
+      { deviceId: 'status-offline-station', ageMinutes: 21, expected: 'offline' },
+    ]) {
+      const payload = {
+        ...validPayload,
+        device_id: sample.deviceId,
+        timestamp: new Date(Date.now() - sample.ageMinutes * 60 * 1000).toISOString(),
+      };
+
+      const ingest = await app.inject({
+        method: 'POST',
+        url: '/v1/ingest',
+        headers: { 'x-api-key': API_KEY, 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      expect(ingest.statusCode).toBe(200);
+
+      const widget = await app.inject({
+        method: 'GET',
+        url: `/v1/widget?device_id=${sample.deviceId}`,
+      });
+      expect(widget.statusCode).toBe(200);
+      expect(JSON.parse(widget.body).station_status).toBe(sample.expected);
+    }
+
+    await app.close();
+  });
+
   it('returns 404 for unknown device', async () => {
     const app = buildIntegrationApp();
     const res = await app.inject({

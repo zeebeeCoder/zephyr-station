@@ -23,7 +23,7 @@ targets:
       properties:
         CFBundleDisplayName: Zephyr
         CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "4"
+        CFBundleVersion: "5"
         ITSAppUsesNonExemptEncryption: false
         NSSupportsLiveActivities: true
         UILaunchScreen: {}
@@ -63,12 +63,13 @@ targets:
       - path: ZephyrStation/WeatherService.swift
       - path: ZephyrStation/WeatherData.swift
       - path: ZephyrStation/HistoryData.swift
+      - path: ZephyrStation/GasResistanceFormatting.swift
     info:
       path: ZephyrWidget/Info.plist
       properties:
         CFBundleDisplayName: ZephyrStation
         CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "4"
+        CFBundleVersion: "5"
         LSApplicationCategoryType: ""
         LSBundleContainsCoreMLmlmodelc: false
         NSExtension:
