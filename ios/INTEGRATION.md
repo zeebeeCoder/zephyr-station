@@ -12,8 +12,8 @@ This file is the self-contained handoff for building, signing, testing, and rele
   - household LAN: available through private DNS;
   - off-LAN 5G with UDM WireGuard: available;
   - off-LAN 5G without WireGuard: hostname does not resolve.
-- The app change has not been built or released from this Linux host because Xcode, Swift, and XcodeGen are unavailable here.
-- The local database did not yet contain a real `mstation` reading when this handoff was written. Complete the firmware cutover before final UI acceptance, or expect `/v1/widget` to return 404.
+- Build `1.0 (4)` compiles for macOS and the iOS 26.5 simulator, its decoder tests pass, and its signed App Store archive validates successfully. TestFlight upload status is not recorded here.
+- The private database contains real `mstation` readings and `/v1/widget` returns them; complete physical-device acceptance before release.
 - AWS/Supabase remain available for rollback. The app has no runtime fallback to them.
 
 Tracking: private consumer cutover is Gate 5 in PKM task `2026-08-31-T0005`. Firmware hardening is PKM task `2026-09-04-T0001`.
@@ -26,12 +26,12 @@ Tracking: private consumer cutover is Gate 5 in PKM task `2026-08-31-T0005`. Fir
 | Device ID | `mstation` | `ZephyrStation/WeatherService.swift` |
 | iOS minimum | iOS 17.0 | `project.yml` |
 | Swift | 5.9 | `project.yml` |
-| App bundle ID | `com.zephyr.station` | `project.yml` |
-| Widget bundle ID | `com.zephyr.station.widget` | `project.yml` |
-| Apple team | `K2HQH74UUP` | `project.yml` |
+| App bundle ID | `dev.miko.portfolioapp` | `project.yml` |
+| Widget bundle ID | `dev.miko.portfolioapp.widget` | `project.yml` |
+| Apple team | `P7XMVL7643` | `project.yml` |
 | Signing | Automatic | `project.yml` |
 | Marketing version | `1.0` | both target `Info.plist` files |
-| Current build | `3` | both target `Info.plist` files |
+| Current build | `4` | both target `Info.plist` files |
 
 The team identifier and bundle identifiers are configuration, not credentials. Confirm that the Apple account used on the Mac belongs to that team and can manage both identifiers.
 
@@ -45,7 +45,7 @@ The API certificate is publicly trusted. Do not bundle a private CA, disable hos
 
 ### Required outside Git
 
-- An Apple Developer/App Store Connect account with access to team `K2HQH74UUP`.
+- An Apple Developer/App Store Connect account with access to team `P7XMVL7643`.
 - Local Apple signing keys and automatically managed provisioning profiles for the app and widget extension.
 - App Store Connect permission to create/upload an internal TestFlight build.
 - The household WireGuard profile installed on each off-LAN test device. Its private key remains in the WireGuard/iOS configuration, not this application.
@@ -147,10 +147,10 @@ Do not use `--insecure` or a raw-IP URL. A remote Mac needs the household WireGu
 In Xcode:
 
 1. Open **Settings → Accounts** and sign in with the authorized Apple Developer account.
-2. Select the `ZephyrStation` project and confirm team `K2HQH74UUP` for both targets.
+2. Select the `ZephyrStation` project and confirm team `P7XMVL7643` for both targets.
 3. Confirm Xcode can automatically manage signing for:
-   - `com.zephyr.station`
-   - `com.zephyr.station.widget`
+   - `dev.miko.portfolioapp`
+   - `dev.miko.portfolioapp.widget`
 4. Resolve any identifier/profile conflict in the Apple Developer portal rather than changing bundle IDs casually.
 5. Select an iPhone simulator and build once.
 6. Select a registered physical iPhone and build/install a Debug build.
@@ -212,14 +212,11 @@ Disable Tailscale on the phone while proving the WireGuard cases. Force-close/re
 
 ## Known integration issues to inspect before TestFlight
 
-These are not credentials, but they should be reviewed on the Mac before release:
+Build 4 validates HTTP status codes, decodes UTC ISO-8601 timestamps with and without fractional seconds, includes decoder tests, and shows an explicit unavailable widget state instead of synthetic weather. Remaining release checks:
 
-1. `WeatherService` currently does not inspect `HTTPURLResponse.statusCode` before decoding. A 4xx/5xx response becomes a generic decoding/load error.
-2. History timestamps contain a UTC `Z`, but the formatter currently sets `TimeZone.current`. Parse backend timestamps as UTC with an ISO-8601 strategy that accepts fractional seconds, and add decoder fixtures before trusting chart times outside UTC; merely retaining the exact-three-fraction formatter remains brittle.
-3. Widget fetch failure silently displays synthetic placeholder data. Add an explicit unavailable/stale state so network failure cannot look like a real reading.
-4. The device ID and API URL are compile-time constants. That is acceptable for one household station, but any future station selection should use a reviewed configuration model rather than scattered literals.
-5. Background widget refresh and Live Activity polling depend on iOS scheduling and WireGuard availability. Validate on the actual family devices; do not publish the API to work around VPN scheduling.
-6. This repository currently has no iOS unit/UI test target or CI build. At minimum, add response-decoder fixtures and a generated-project build check on a macOS runner before routine releases.
+1. The device ID and API URL are compile-time constants. That is acceptable for one household station, but any future station selection should use a reviewed configuration model rather than scattered literals.
+2. Background widget refresh and Live Activity polling depend on iOS scheduling and WireGuard availability. Validate on the actual family devices; do not publish the API to work around VPN scheduling.
+3. The repository now has an iOS decoder-test target but no UI tests or macOS CI build. Add a generated-project build check on a macOS runner before routine releases.
 
 ## Internal TestFlight release
 

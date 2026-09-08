@@ -3,7 +3,7 @@ import Foundation
 /// Maps to the JSON response from the Zephyr API
 struct WeatherResponse: Codable {
     let deviceId: String
-    let recordedAt: String
+    let recordedAt: Date
     let readings: Readings
     let meta: Meta
     let stationStatus: String

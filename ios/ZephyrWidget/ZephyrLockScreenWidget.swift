@@ -18,7 +18,7 @@ struct ZephyrTimelineProvider: TimelineProvider {
     private let weatherService = WeatherService()
 
     func placeholder(in context: Context) -> ZephyrEntry {
-        ZephyrEntry(date: Date(), temperatureC: 20.0, humidityPct: 50, pressureHpa: 1013, pm25: 12, windSpeedMs: 1.2, stationStatus: "online")
+        ZephyrEntry(date: Date(), temperatureC: 20.0, humidityPct: 50, pressureHpa: 1013, pm25: 12, windSpeedMs: 1.2, stationStatus: "online", isAvailable: true)
     }
 
     func getSnapshot(in context: Context, completion: @escaping (ZephyrEntry) -> Void) {
@@ -36,10 +36,20 @@ struct ZephyrTimelineProvider: TimelineProvider {
                     pressureHpa: weather.readings.pressureHpa,
                     pm25: weather.readings.pm25,
                     windSpeedMs: weather.readings.windSpeedMs,
-                    stationStatus: weather.stationStatus
+                    stationStatus: weather.stationStatus,
+                    isAvailable: true
                 )
             } else {
-                entry = placeholder(in: context)
+                entry = ZephyrEntry(
+                    date: Date(),
+                    temperatureC: 0,
+                    humidityPct: 0,
+                    pressureHpa: 0,
+                    pm25: nil,
+                    windSpeedMs: nil,
+                    stationStatus: "unavailable",
+                    isAvailable: false
+                )
             }
             let nextUpdate = Date().addingTimeInterval(5 * 60)
             let timeline = Timeline(entries: [entry], policy: .after(nextUpdate))
@@ -56,6 +66,32 @@ struct ZephyrEntry: TimelineEntry {
     let pm25: Int?
     let windSpeedMs: Double?
     let stationStatus: String
+    let isAvailable: Bool
+}
+
+private struct UnavailableWidgetOverlay: View {
+    var body: some View {
+        VStack(spacing: 3) {
+            Image(systemName: "wifi.slash")
+            Text("UNAVAILABLE")
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+        }
+        .padding(6)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func zephyrDataState(_ isAvailable: Bool) -> some View {
+        if isAvailable {
+            self
+        } else {
+            self
+                .redacted(reason: .placeholder)
+                .overlay { UnavailableWidgetOverlay() }
+        }
+    }
 }
 
 // MARK: - Helpers
@@ -144,6 +180,7 @@ struct ZephyrCircularWidget: Widget {
                         .font(.system(size: 24, weight: .heavy, design: .monospaced))
                 }
             }
+            .zephyrDataState(entry.isAvailable)
             .containerBackground(.clear, for: .widget)
         }
         .configurationDisplayName("Temperature")
@@ -167,6 +204,7 @@ struct ZephyrPM25CircularWidget: Widget {
                         .font(.system(size: 24, weight: .heavy, design: .monospaced))
                 }
             }
+            .zephyrDataState(entry.isAvailable)
             .containerBackground(.clear, for: .widget)
         }
         .configurationDisplayName("Air Quality")
@@ -186,6 +224,7 @@ struct ZephyrInlineWidget: Widget {
                 Text("PM:\(entry.pm25.map { "\($0)" } ?? "--")")
             }
             .font(.system(.body, design: .monospaced))
+            .zephyrDataState(entry.isAvailable)
             .containerBackground(.clear, for: .widget)
         }
         .configurationDisplayName("Temp & Air Quality")
@@ -233,6 +272,7 @@ struct ZephyrRectangularWidget: Widget {
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                 .foregroundStyle(.secondary)
             }
+            .zephyrDataState(entry.isAvailable)
             .containerBackground(.clear, for: .widget)
         }
         .configurationDisplayName("Weather & Air Quality")
@@ -274,6 +314,7 @@ struct ZephyrTempHumWidget: Widget {
                         .font(.system(size: 16))
                 }
             }
+            .zephyrDataState(entry.isAvailable)
             .containerBackground(.clear, for: .widget)
         }
         .configurationDisplayName("Temp + Humidity")
@@ -320,6 +361,7 @@ struct ZephyrTempPMWidget: Widget {
                         .font(.system(size: 16))
                 }
             }
+            .zephyrDataState(entry.isAvailable)
             .containerBackground(.clear, for: .widget)
         }
         .configurationDisplayName("Temp + PM2.5")
@@ -364,6 +406,7 @@ struct ZephyrTempWindWidget: Widget {
                         .font(.system(size: 16))
                 }
             }
+            .zephyrDataState(entry.isAvailable)
             .containerBackground(.clear, for: .widget)
         }
         .configurationDisplayName("Temp + Wind")
@@ -420,6 +463,7 @@ struct ZephyrDesktopSmallWidget: Widget {
                 }
             }
             .padding(12)
+            .zephyrDataState(entry.isAvailable)
             .containerBackground(for: .widget) {
                 ZStack {
                     retroDark
@@ -528,6 +572,7 @@ struct ZephyrDesktopMediumWidget: Widget {
                 .padding(.vertical, 12)
             }
             .padding(.horizontal, 12)
+            .zephyrDataState(entry.isAvailable)
             .containerBackground(for: .widget) {
                 ZStack {
                     retroDark

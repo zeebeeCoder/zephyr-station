@@ -163,8 +163,10 @@ struct HistoryChartView: View {
             errorMessage = nil
             do {
                 response = try await service.fetchHistory(metric: metric, range: range)
+                errorMessage = nil
             } catch {
-                errorMessage = "Could not load history"
+                response = nil
+                errorMessage = error.localizedDescription
             }
             isLoading = false
         }

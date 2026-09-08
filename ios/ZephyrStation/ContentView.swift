@@ -140,13 +140,11 @@ struct LiveView: View {
             Text(weather.stationStatus.capitalized)
                 .font(.system(.caption, design: theme.fontDesign))
                 .foregroundStyle(theme.textSecondary)
-            if let recordedDate = parseRecordedAt(weather.recordedAt) {
-                Text("\u{2022}")
-                    .foregroundStyle(theme.textSecondary)
-                Text(recordedDate, style: .relative)
-                    .font(.system(.caption, design: theme.fontDesign))
-                    .foregroundStyle(theme.textSecondary)
-            }
+            Text("\u{2022}")
+                .foregroundStyle(theme.textSecondary)
+            Text(weather.recordedAt, style: .relative)
+                .font(.system(.caption, design: theme.fontDesign))
+                .foregroundStyle(theme.textSecondary)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -163,21 +161,16 @@ struct LiveView: View {
         )
     }
 
-    private func parseRecordedAt(_ str: String) -> Date? {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"
-        f.timeZone = TimeZone.current
-        return f.date(from: str)
-    }
-
     private func loadWeather() async {
         do {
             weather = try await weatherService.fetchWeather()
+            errorMessage = nil
             #if os(iOS)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             #endif
         } catch {
-            errorMessage = "Could not load weather data"
+            weather = nil
+            errorMessage = error.localizedDescription
             #if os(iOS)
             UINotificationFeedbackGenerator().notificationOccurred(.error)
             #endif
@@ -438,6 +431,7 @@ struct MiniChartSheet: View {
     let metric: HistoryMetric
     @State private var response: HistoryResponse?
     @State private var isLoading = true
+    @State private var errorMessage: String?
     @State private var selectedDate: Date?
     @Environment(\.theme) private var theme
 
@@ -549,8 +543,9 @@ struct MiniChartSheet: View {
                 }
             } else {
                 Spacer()
-                Text("No data available")
-                    .foregroundStyle(.secondary)
+                Text(errorMessage ?? "No data available")
+                    .foregroundStyle(errorMessage == nil ? Color.secondary : Color.red)
+                    .multilineTextAlignment(.center)
                 Spacer()
             }
         }
@@ -558,7 +553,11 @@ struct MiniChartSheet: View {
         .task {
             do {
                 response = try await service.fetchHistory(metric: metric, range: .day)
-            } catch {}
+                errorMessage = nil
+            } catch {
+                response = nil
+                errorMessage = error.localizedDescription
+            }
             isLoading = false
         }
     }
