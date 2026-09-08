@@ -12,7 +12,7 @@ This file is the self-contained handoff for building, signing, testing, and rele
   - household LAN: available through private DNS;
   - off-LAN 5G with UDM WireGuard: available;
   - off-LAN 5G without WireGuard: hostname does not resolve.
-- Build `1.0 (4)` was installed from TestFlight and accepted on a physical iPhone. Build `1.0 (5)` adds the all-metrics history dashboard and is prepared for TestFlight.
+- Build `1.0 (4)` was installed from TestFlight and accepted on a physical iPhone. Build `1.0 (6)` keeps the build-5 all-metrics history dashboard while caching chart responses, debouncing range changes, and honoring API rate-limit cooldowns.
 - The private database contains real `mstation` readings and `/v1/widget` returns them.
 - AWS/Supabase remain available for rollback. The app has no runtime fallback to them.
 
@@ -31,7 +31,7 @@ Tracking: private consumer cutover is Gate 5 in PKM task `2026-08-31-T0005`. Fir
 | Apple team | `P7XMVL7643` | `project.yml` |
 | Signing | Automatic | `project.yml` |
 | Marketing version | `1.0` | both target `Info.plist` files |
-| Current build | `5` | both target `Info.plist` files |
+| Current build | `6` | both target `Info.plist` files |
 
 The team identifier and bundle identifiers are configuration, not credentials. Confirm that the Apple account used on the Mac belongs to that team and can manage both identifiers.
 

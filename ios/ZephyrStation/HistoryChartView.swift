@@ -162,6 +162,9 @@ private struct MetricHistoryCard: View {
         errorMessage = nil
 
         do {
+            // Avoid spending nine requests on an intermediate range while the
+            // user is still moving through the segmented control.
+            try await Task.sleep(for: .milliseconds(350))
             let result = try await service.fetchHistory(metric: metric, range: range)
             guard !Task.isCancelled else { return }
             response = result

@@ -23,7 +23,7 @@ targets:
       properties:
         CFBundleDisplayName: Zephyr
         CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "5"
+        CFBundleVersion: "6"
         ITSAppUsesNonExemptEncryption: false
         NSSupportsLiveActivities: true
         UILaunchScreen: {}
@@ -69,7 +69,7 @@ targets:
       properties:
         CFBundleDisplayName: ZephyrStation
         CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "5"
+        CFBundleVersion: "6"
         LSApplicationCategoryType: ""
         LSBundleContainsCoreMLmlmodelc: false
         NSExtension:
