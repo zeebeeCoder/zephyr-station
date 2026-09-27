@@ -100,7 +100,7 @@
 
 // Sensor timing
 #define PMS_WARMUP_MS 30000      // 30 seconds for PMS7003 fan stabilization
-#define WIND_SAMPLE_MS 5000     // 5 seconds for wind measurement (longer window captures gusts)
+#define WIND_SAMPLE_MS 30000    // 30 seconds for wind measurement (longer window gives steadier readings)
 #define DEBOUNCE_TIME_MS 10     // 10ms debounce for anemometer
 
 // Anemometer calibration (FG-000WIND-004)
