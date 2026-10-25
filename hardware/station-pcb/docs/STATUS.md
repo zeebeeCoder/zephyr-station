@@ -4,41 +4,52 @@ Updated 25.10.2026. Maintained by the coordinator, `mobric/pcb-head`; created in
 
 ## Phase
 
-**F0 (workspace setup): done, accepted by the coordinator 25.10.2026.**
+**F1 (requirements and architecture): draft done 25.10.2026, waiting for review.** The documents are [REQUIREMENTS.md](REQUIREMENTS.md) and [ARCHITECTURE.md](ARCHITECTURE.md). The coordinator routes the review to Codex. The F1 gate is mobric approving D2–D12.
 
-F1 (requirements and architecture) starts with the coordinator's brief, once mobric has sent the missing data below.
+F0 (workspace setup): done, accepted by the coordinator 25.10.2026.
 
 Sequence: F0 setup → F1 requirements and architecture → F2 atopile schematic → F3 KiCad layout → F4 production files → F5 enclosure and firmware (in parallel from F3) → F6 bring-up. Every phase ends at a gate, and the next one doesn't start without approval.
 
 ## Decisions
 
-| # | Topic | State |
-|---|---|---|
-| D1 | Project location: `zephyr-station/hardware/station-pcb/` on branch `hardware/station-pcb` | approved 25.10.2026 |
-| D2 | Microcontroller | open |
-| D3 | Programming interface | open |
-| D4 | Radio | open |
-| D5 | Solar charging | open |
-| D6 | 3.3 V rail | open |
-| D7 | 5 V rail for the PMS7003 | open |
-| D8 | BME680 placement | open |
-| D9 | Power measurement | open |
-| D10 | Spare inputs (wind vane, 1-Wire) | open |
-| D11 | Board size and enclosure | open |
-| D12 | Manufacturing | open |
+| # | Topic | State | F1 recommendation (not approved) |
+|---|---|---|---|
+| D1 | Project location: `zephyr-station/hardware/station-pcb/` on branch `hardware/station-pcb` | approved 25.10.2026 | — |
+| D2 | Microcontroller | open | ESP32-WROOM-32E-N4 |
+| D3 | Programming interface | open | USB-C + CH343P powered from USB, auto-reset |
+| D4 | Radio | open | SX1276 on SPI: Ra-01H first, RFM95W alternative; u.FL to an SMA bulkhead |
+| D5 | Solar charging | open | CN3791 on board, MPPT 18.69 V, 1.46 A, NTC window inhibit (0–45 °C) |
+| D5.2 | Cell protection placement | open | Keep the external protection board at the cells |
+| D6 | 3.3 V rail | open | TPS631000 buck-boost |
+| D7 | 5 V rail for the PMS7003 | open | TPS61023 with true disconnect, EN on GPIO13 |
+| D8 | BME680 placement | open | Keep the off-board breakout on the Cat5e cable |
+| D9 | Power measurement | open | One INA219 at 0x45, 0.1 Ω shunt in the battery path |
+| D10 | Spare inputs (wind vane, 1-Wire) | open | Wind vane on GPIO36, 1-Wire on GPIO16 |
+| D11 | Board size and enclosure | open (mobric undecided) | Parametric outline |
+| D12 | Manufacturing | open | JLCPCB Standard PCBA, 2 layers, 5 boards (about $195 + shipping) |
 
-F1 presents D2–D12 with recommendations, cost and firmware impact for mobric to approve.
+Each recommendation's options, reasons, cost and firmware impact are in [ARCHITECTURE.md § 5](ARCHITECTURE.md#5-decisions-d1d12).
 
 ## Open questions for mobric
 
-1. Solar panel: Voc/Vmp and wattage.
-2. Battery pack (10 200 mAh): cell count, its own BMS or not, connector.
-3. Cable lengths to the anemometer, the BME680 and the panel.
-4. Enclosure: an existing one (dimensions) or designed from scratch.
-5. Budget and number of boards.
-6. Distance from the station to the gateway (affects the antenna).
+Answered 25.10.2026 (in REQUIREMENTS.md § 1):
+- Panel: SunUP SR10-36M, 10 W.
+- Battery: 1S3P with an external protection board.
+- Cables: all < 1 m.
+- Gateway: about 20 m away.
+- Budget: none set.
+
+Still open: the enclosure (D11) and the board quantity.
+
+The new questions from F1 (14 of them) are in [ARCHITECTURE.md § 8](ARCHITECTURE.md#8-open-questions-for-mobric). The most important are:
+- whether the battery is wired in series or parallel;
+- shading and tilt at the panel;
+- today's sleep current and the CN3791 divider, measured with a multimeter;
+- the connector on the BME680 cable.
 
 ## Risks
+
+Risks found in F1 (cold Voc against the CN3791 limits, the cold-charge inhibit, the radio driver on core 3.3.11, and others) are listed in [ARCHITECTURE.md § 7](ARCHITECTURE.md#7-risks-and-bench-tests-f6).
 
 - **R1. atopile 0.15.9 can't read layouts saved by KiCad 10.** Found 25.10.2026 on a scratch copy: after `kicad-cli pcb upgrade` moved the file from format 20241229 to 20260206, `ato build` failed at "Loading PCB" with `UnexpectedType in kicad.pcb.Layer field 'tenting'`. KiCad can't save in the older format.
   - **Decided 25.10.2026 by mobric (relayed by pcb-head): option (a).** This layout is edited in KiCad 9.0.x, installed next to KiCad 10. mobric installs it himself (it needs sudo).
@@ -51,10 +62,10 @@ F1 presents D2–D12 with recommendations, cost and firmware impact for mobric t
 
 | Who | Role | Now |
 |---|---|---|
-| mobric | Owner. Approves decisions, orders and payment, firmware flashing, changes outside this folder | Answering the open questions; installing KiCad 9.0.x (R1) |
-| `mobric/pcb-head` | Coordinator: briefs, gates, this file | F1 brief, once mobric's data is in |
-| `mobric/pcb-opus-5-5` | Designer (Claude Code): atopile code, documents, KiCad, enclosure, firmware branch | F0 done, waiting for the F1 brief |
-| `mobric/mikolaj-codex` | Reviewer (Codex): checks against datasheets, writes `docs/reviews/F<n>-codex.md`, doesn't edit designer files | Waiting for the F1 draft |
+| mobric | Owner. Approves decisions, orders and payment, firmware flashing, changes outside this folder | F1 open questions; installing KiCad 9.0.x (R1); then approving D2–D12 |
+| `mobric/pcb-head` | Coordinator: briefs, gates, this file | Routing the F1 review |
+| `mobric/pcb-opus-5-5` | Designer (Claude Code): atopile code, documents, KiCad, enclosure, firmware branch | F1 draft done; waiting for review comments |
+| `mobric/mikolaj-codex` | Reviewer (Codex): checks against datasheets, writes `docs/reviews/F<n>-codex.md`, doesn't edit designer files | F1 review, once the coordinator routes it |
 
 The handoff session `mobric/projektowanie-custom-pcb-z-ai` delivered the project context on 25.10.2026 and does no further work.
 
