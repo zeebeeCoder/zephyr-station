@@ -1,0 +1,130 @@
+Output of winter_model.py for F1 revision 1, run 25.10.2026 (model-derived, not measured).
+
+Inputs: PVGIS v5.3 hourly series, lat 50.90, lon 15.73, 2005-2023, south, 1 kWp, loss 14 %,
+fetched with the query in the script's docstring (angle 45, 60 or 70). SHA-256 of the files used:
+  ser45.json  f562649f1b8aeba8fafad2ba230702f55eaac3ba422070619459137a5dfe9bb4
+  ser60.json  66b1548093a9b15f062adb9aed7e78c9c10262daec90899b09f742072edb8b19  (same file as the F1 review's cache)
+  ser70.json  788b403ed940ba836b5a913cb355a9ed3dc184118a6c93a62a87fbb984a225a9
+Sleep floors: 55.5 uA typical, 101.8 uA bounded (ARCHITECTURE.md section 4.2).
+
+$ python3 -I docs/calc/winter_model.py codex ser60.json
+Series: 60 deg, PVGIS-SARAH3/ERA5, 2005-2023
+December mean, gated 0-45 C: 8.678 Wh/day
+12-18 Dec 2018: 0.264 Wh/day
+13-26 Dec 2018: 1.007 Wh/day
+Worst December 7-day window: 0.000 Wh/day, 20071214-20071220
+Worst December 14-day window: 0.123 Wh/day, 20121201-20121214
+Max cumulative deficit M1 nominal (1.375 Wh/day): 40.57 Wh, 20100101-20100216
+Max cumulative deficit M1 pessimistic (1.911 Wh/day): 66.00 Wh, 20051224-20060213
+Max cumulative deficit M2 nominal (0.672 Wh/day): 16.12 Wh, 20120124-20120216
+Max cumulative deficit M2 pessimistic (0.805 Wh/day): 19.32 Wh, 20120124-20120216
+
+$ python3 -I docs/calc/winter_model.py scenarios ser45.json ser70.json
+| December case, 45 deg south | No temperature limit, Wh/day | Charging 0-45 C, Wh/day | Charging +1 to +44 C, Wh/day |
+|---|---|---|---|
+| Mean | 12.58 | 7.99 | 6.93 |
+| Median day | 7.46 | 3.37 | 2.99 |
+| 10th-percentile day | 1.88 | 0.00 | 0.00 |
+| Worst 7-day window | 2.52 | 0.00 | 0.00 |
+| Worst 14-day window | 2.64 | 0.13 | 0.00 |
+  worst 7-day, ungated: 2.515 Wh/day, 20181212-20181218
+  worst 14-day, ungated: 2.642 Wh/day, 20181213-20181226
+  worst 7-day, 0-45 C: 0.000 Wh/day, 20071214-20071220
+  worst 14-day, 0-45 C: 0.127 Wh/day, 20121201-20121214
+  worst 7-day, +1-44 C: 0.000 Wh/day, 20051225-20051231
+  worst 14-day, +1-44 C: 0.000 Wh/day, 20121201-20121214
+Daily loads (battery side):
+  M1 now (19.4-min cycle)  normal      303.2 mAh = 1.122 Wh/day (PM 78.1 mAh)
+  M1 nominal               normal      378.3 mAh = 1.400 Wh/day (PM 101.2 mAh)
+  M1 pessimistic           normal      550.2 mAh = 2.036 Wh/day (PM 126.5 mAh)
+  M2 nominal               normal      188.0 mAh = 0.696 Wh/day (PM 101.2 mAh)
+  M2 pessimistic           normal      236.3 mAh = 0.874 Wh/day (PM 126.5 mAh)
+  M2 adaptive              normal      188.0 mAh = 0.696 Wh/day (PM 101.2 mAh)
+  M2 adaptive              lean         83.4 mAh = 0.309 Wh/day (PM 50.6 mAh)
+  M2 adaptive              survival     16.1 mAh = 0.060 Wh/day (PM 0.0 mAh)
+45 deg December mean into battery: 7.989 Wh/day gated, 12.584 Wh/day if charging were allowed at any temperature
+45 deg worst December 7-day window, gated: 0.000 Wh/day, 20071214-20071220
+45 deg worst December 14-day window, gated: 0.127 Wh/day, 20121201-20121214
+45 deg daily-netting max deficit M1 nominal: 41.37 Wh, 20051224-20060207
+45 deg daily-netting max deficit M2 nominal: 16.12 Wh, 20120124-20120216
+
+| Case | Load profile | Seasons with brown-out | Brown-out days, 18 seasons | Worst season, days | Longest brown-out | Lowest charge | Lean / survival days |
+|---|---|---|---|---|---|---|---|
+| Lower cutoff 0 C at the cells (exact, no tolerance) | M1 nominal | 5/18 | 21 | 8 (2005/06) | 4 d from 2005-03-07 | 0 % | - |
+| Lower cutoff 0 C at the cells (exact, no tolerance) | M1 pessimistic | 8/18 | 98 | 30 (2005/06) | 14 d from 2006-01-07 | 0 % | - |
+| Lower cutoff 0 C at the cells (exact, no tolerance) | M2 nominal | 0/18 | 0 | - | - | 49 % | - |
+| Lower cutoff 0 C at the cells (exact, no tolerance) | M2 adaptive | 0/18 | 0 | - | - | 49 % | 0 / 0 |
+| Lower cutoff +1 C (interlock error <= 1 K) | M1 nominal | 6/18 | 90 | 33 (2005/06) | 27 d from 2010-01-22 | 0 % | - |
+| Lower cutoff +1 C (interlock error <= 1 K) | M1 pessimistic | 11/18 | 186 | 57 (2005/06) | 38 d from 2006-01-01 | 0 % | - |
+| Lower cutoff +1 C (interlock error <= 1 K) | M2 nominal | 1/18 | 2 | 2 (2005/06) | 2 d from 2006-02-14 | 0 % | - |
+| Lower cutoff +1 C (interlock error <= 1 K) | M2 adaptive | 0/18 | 0 | - | - | 23 % | 45 / 0 |
+| Lower cutoff +2 C (interlock error <= 2 K) | M1 nominal | 10/18 | 178 | 63 (2005/06) | 48 d from 2005-12-22 | 0 % | - |
+| Lower cutoff +2 C (interlock error <= 2 K) | M1 pessimistic | 15/18 | 315 | 81 (2005/06) | 50 d from 2005-12-20 | 0 % | - |
+| Lower cutoff +2 C (interlock error <= 2 K) | M2 nominal | 2/18 | 24 | 19 (2005/06) | 12 d from 2006-01-27 | 0 % | - |
+| Lower cutoff +2 C (interlock error <= 2 K) | M2 adaptive | 0/18 | 0 | - | - | 14 % | 92 / 13 |
+| Lower cutoff +3 C (interlock error <= 3 K) | M1 nominal | 14/18 | 304 | 98 (2005/06) | 72 d from 2005-12-07 | 0 % | - |
+| Lower cutoff +3 C (interlock error <= 3 K) | M1 pessimistic | 16/18 | 478 | 107 (2005/06) | 79 d from 2005-11-30 | 0 % | - |
+| Lower cutoff +3 C (interlock error <= 3 K) | M2 nominal | 2/18 | 80 | 67 (2005/06) | 50 d from 2005-12-29 | 0 % | - |
+| Lower cutoff +3 C (interlock error <= 3 K) | M2 adaptive | 0/18 | 0 | - | - | 6 % | 169 / 51 |
+| Pack x2 (20.4 Ah), cutoff +1 C | M1 nominal | 2/18 | 15 | 10 (2005/06) | 10 d from 2006-02-06 | 0 % | - |
+| Pack x2 (20.4 Ah), cutoff +1 C | M1 pessimistic | 5/18 | 67 | 34 (2005/06) | 34 d from 2006-01-13 | 0 % | - |
+| Pack x2 (20.4 Ah), cutoff +1 C | M2 nominal | 0/18 | 0 | - | - | 45 % | - |
+| Pack x2 (20.4 Ah), cutoff +1 C | M2 adaptive | 0/18 | 0 | - | - | 45 % | 0 / 0 |
+| Pack x3 (30.6 Ah), cutoff +1 C | M1 nominal | 0/18 | 0 | - | - | 19 % | - |
+| Pack x3 (30.6 Ah), cutoff +1 C | M1 pessimistic | 2/18 | 24 | 19 (2005/06) | 19 d from 2006-01-28 | 0 % | - |
+| Pack x3 (30.6 Ah), cutoff +1 C | M2 nominal | 0/18 | 0 | - | - | 62 % | - |
+| Pack x3 (30.6 Ah), cutoff +1 C | M2 adaptive | 0/18 | 0 | - | - | 62 % | 0 / 0 |
+| Panel 20 W, cutoff +1 C | M1 nominal | 6/18 | 64 | 29 (2005/06) | 24 d from 2010-01-25 | 0 % | - |
+| Panel 20 W, cutoff +1 C | M1 pessimistic | 9/18 | 150 | 47 (2005/06) | 32 d from 2006-01-07 | 0 % | - |
+| Panel 20 W, cutoff +1 C | M2 nominal | 0/18 | 0 | - | - | 3 % | - |
+| Panel 20 W, cutoff +1 C | M2 adaptive | 0/18 | 0 | - | - | 25 % | 41 / 0 |
+| Tilt 70 deg, cutoff +1 C | M1 nominal | 6/18 | 95 | 35 (2005/06) | 27 d from 2010-01-22 | 0 % | - |
+| Tilt 70 deg, cutoff +1 C | M1 pessimistic | 12/18 | 192 | 58 (2005/06) | 38 d from 2006-01-01 | 0 % | - |
+| Tilt 70 deg, cutoff +1 C | M2 nominal | 1/18 | 4 | 4 (2005/06) | 4 d from 2006-02-13 | 0 % | - |
+| Tilt 70 deg, cutoff +1 C | M2 adaptive | 0/18 | 0 | - | - | 22 % | 46 / 0 |
+| Sun-warmed box, cells +1 K per 100 W/m2 (illustrative), cutoff +1 C | M1 nominal | 0/18 | 0 | - | - | 20 % | - |
+| Sun-warmed box, cells +1 K per 100 W/m2 (illustrative), cutoff +1 C | M1 pessimistic | 2/18 | 5 | 3 (2008/09) | 3 d from 2009-01-15 | 0 % | - |
+| Sun-warmed box, cells +1 K per 100 W/m2 (illustrative), cutoff +1 C | M2 nominal | 0/18 | 0 | - | - | 63 % | - |
+| Sun-warmed box, cells +1 K per 100 W/m2 (illustrative), cutoff +1 C | M2 adaptive | 0/18 | 0 | - | - | 63 % | 0 / 0 |
+| Panel-powered pack heater (illustrative), cutoff +1 C | M1 nominal | 0/18 | 0 | - | - | 42 % | - |
+| Panel-powered pack heater (illustrative), cutoff +1 C | M1 pessimistic | 0/18 | 0 | - | - | 7 % | - |
+| Panel-powered pack heater (illustrative), cutoff +1 C | M2 nominal | 0/18 | 0 | - | - | 78 % | - |
+| Panel-powered pack heater (illustrative), cutoff +1 C | M2 adaptive | 0/18 | 0 | - | - | 78 % | 0 / 0 |
+| Cells chargeable down to -20 C (e.g. LTO) | M1 nominal | 0/18 | 0 | - | - | 86 % | - |
+| Cells chargeable down to -20 C (e.g. LTO) | M1 pessimistic | 0/18 | 0 | - | - | 80 % | - |
+| Cells chargeable down to -20 C (e.g. LTO) | M2 nominal | 0/18 | 0 | - | - | 93 % | - |
+| Cells chargeable down to -20 C (e.g. LTO) | M2 adaptive | 0/18 | 0 | - | - | 93 % | 0 / 0 |
+
+| Case (10 W, 45 deg, 10.2 Ah unless stated) | M1 nominal | M1 pessimistic | M2 nominal | M2 adaptive |
+|---|---|---|---|---|
+| Lower cutoff 0 C at the cells (exact, no tolerance) | 5/18, 21 d (longest 4 d) | 8/18, 98 d (longest 14 d) | none (lowest 49 %) | none (lowest 49 %) |
+| Lower cutoff +1 C (interlock error <= 1 K) | 6/18, 90 d (longest 27 d) | 11/18, 186 d (longest 38 d) | 1/18, 2 d (longest 2 d) | none (lowest 23 %) |
+| Lower cutoff +2 C (interlock error <= 2 K) | 10/18, 178 d (longest 48 d) | 15/18, 315 d (longest 50 d) | 2/18, 24 d (longest 12 d) | none (lowest 14 %) |
+| Lower cutoff +3 C (interlock error <= 3 K) | 14/18, 304 d (longest 72 d) | 16/18, 478 d (longest 79 d) | 2/18, 80 d (longest 50 d) | none (lowest 6 %) |
+| Pack x2 (20.4 Ah), cutoff +1 C | 2/18, 15 d (longest 10 d) | 5/18, 67 d (longest 34 d) | none (lowest 45 %) | none (lowest 45 %) |
+| Pack x3 (30.6 Ah), cutoff +1 C | none (lowest 19 %) | 2/18, 24 d (longest 19 d) | none (lowest 62 %) | none (lowest 62 %) |
+| Panel 20 W, cutoff +1 C | 6/18, 64 d (longest 24 d) | 9/18, 150 d (longest 32 d) | none (lowest 3 %) | none (lowest 25 %) |
+| Tilt 70 deg, cutoff +1 C | 6/18, 95 d (longest 27 d) | 12/18, 192 d (longest 38 d) | 1/18, 4 d (longest 4 d) | none (lowest 22 %) |
+| Sun-warmed box, cells +1 K per 100 W/m2 (illustrative), cutoff +1 C | none (lowest 20 %) | 2/18, 5 d (longest 3 d) | none (lowest 63 %) | none (lowest 63 %) |
+| Panel-powered pack heater (illustrative), cutoff +1 C | none (lowest 42 %) | none (lowest 7 %) | none (lowest 78 %) | none (lowest 78 %) |
+| Cells chargeable down to -20 C (e.g. LTO) | none (lowest 86 %) | none (lowest 80 %) | none (lowest 93 %) | none (lowest 93 %) |
+
+Smallest nominal pack with no brown-out in 2005/06-2022/23 (10 W, 45 deg):
+  gate +0 C  M1 now (19.4-min cycle)  9.6 Ah
+  gate +0 C  M1 nominal               13.9 Ah
+  gate +0 C  M1 pessimistic           26.2 Ah
+  gate +0 C  M2 nominal               5.2 Ah
+  gate +0 C  M2 pessimistic           6.6 Ah
+  gate +0 C  M2 adaptive              1.9 Ah
+  gate +1 C  M1 now (19.4-min cycle)  19.5 Ah
+  gate +1 C  M1 nominal               24.7 Ah
+  gate +1 C  M1 pessimistic           44.3 Ah
+  gate +1 C  M2 nominal               10.8 Ah
+  gate +1 C  M2 pessimistic           13.9 Ah
+  gate +1 C  M2 adaptive              3.8 Ah
+  gate +3 C  M1 now (19.4-min cycle)  46.4 Ah
+  gate +3 C  M1 nominal               59.0 Ah
+  gate +3 C  M1 pessimistic           88.4 Ah
+  gate +3 C  M2 nominal               25.8 Ah
+  gate +3 C  M2 pessimistic           33.6 Ah
+  gate +3 C  M2 adaptive              6.6 Ah
