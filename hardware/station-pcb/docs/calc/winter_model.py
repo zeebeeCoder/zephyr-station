@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hourly winter energy model for the Zephyr station PCB (F1 revision 2).
+"""Hourly winter energy model for the Zephyr station PCB (F1 revision 3).
 
 Input is a PVGIS v5.3 seriescalc JSON: hourly, pvcalculation=1, peakpower=1
 (kWp), loss=14. PVGIS's aspect is the azimuth from south (90 = west), so the
@@ -15,7 +15,7 @@ Usage (standard library only):
       Reproduces the re-review's hysteresis sensitivity (docs/reviews/F1-codex-r2.md,
       R2-M1) with the revision-1 loads and policy.
   python3 -I winter_model.py scenarios SERIES_45_SW.json SERIES_70_SW.json SERIES_45_SOUTH.json
-      Runs the revision-2 model for ARCHITECTURE.md sections 4.3-4.5 and D13.
+      Runs the revision-3 model for ARCHITECTURE.md sections 4.3-4.5 and D13.
 
 Every input below is an assumption or a datasheet value documented in
 ARCHITECTURE.md section 4. The results are model outputs, not measurements.
@@ -38,7 +38,8 @@ PM_SKIP_C = -10.0       # PM readings skipped below this air temperature (owner 
 WIFI_MAH = 1.0          # daily allowance for an occasional Wi-Fi/OTA session (assumed)
 K3 = 3.3 / (0.9 * 3.7)  # awake 3.3 V rail mAh -> battery mAh
 K5 = 5.0 / (0.9 * 3.7)  # 5 V rail mAh -> battery mAh
-CELL_AH = 3.4           # one cell of the owner's pack: 10.2 Ah in 1S3P (owner answer)
+CELL_AH = 3.35          # Samsung INR18650-35E, minimum capacity at 0.2C (owner answer 19; Samsung
+                        # technical report, June 2015): 10.05 Ah in today's 1S3P
 
 
 def load_series(path):
@@ -189,36 +190,51 @@ def read_event(fw, p, pm=True):
     return (secs * rail + HEATER_MA_S + TX_MA_S) * K3 / 3600 + pms, secs, pms
 
 
-# Schedules on an absolute minute grid: (full-read period, listen period) in seconds, PM on
-# full reads, Wi-Fi/OTA allowance. A full read takes the listen slot it starts in and every
-# slot that starts before it ends.
+# Schedules on an absolute minute grid: (full-read period, listen period or None) in seconds,
+# PM on full reads, Wi-Fi/OTA allowance. Revision 3 has no listen windows (owner answer 23:
+# nobody uses the gateway's request button). The listening schedules remain only to compare
+# with today's firmware and revision 2; there a full read takes the listen slot it starts in
+# and every slot that starts before it ends.
 SCHEDULES = {
-    "normal": (900, 60, True, True),
-    "lean": (1800, 300, True, True),
-    "survival": (3600, 900, False, False),
-    "lean, 2-min listen": (1800, 120, True, True),         # keeps every gateway request heard
-    "survival, 2-min listen": (3600, 120, False, False),
+    "normal": (900, None, True, True),
+    "lean": (1800, None, True, True),
+    "survival": (3600, None, False, False),
+    "normal, 1-min listen": (900, 60, True, True),          # today's listen period
+    "lean, 5-min listen": (1800, 300, True, True),           # revision 2
+    "survival, 15-min listen": (3600, 900, False, False),    # revision 2
 }
 GATEWAY_WINDOW_S = 120       # the unchanged gateway repeats a request for 120 s (gateway.ino)
-REQUESTS = (2.0, 10.0)       # button requests per day, nominal / pessimistic (assumed)
+REQUESTS = (2.0, 10.0)       # button requests per day while listening, nominal / pessimistic (assumed)
+ACK_S = 2.0                  # receive window after each report for a LoRa ACK (PRD Phase 3; sensitivity)
 
 # Drain on the cells, protection board included (ARCHITECTURE.md section 4.2), in uA.
 FLOOR_UA = (55.8, 138.7)     # deep sleep: typical at 3.7 V / high-side estimate at 3.0 V and 70 %
+                             # (pessimistic: the converter runs down to 3.05 V at most)
+FLOOR_LIMIT_UA = 156.0       # sensitivity: a board at R-P7's limit (b), 136 uA at 3.4 V, is the same
+                             # 3.3 V-rail load as 150 uA at 3.0 V; plus 6 uA for the protection board
 OFF_UA = (15.6, 27.3)        # the TPS3840 holds the 3.3 V converter off: typical / high-side
 HIB_CHECK_MAH = 0.25 * 25.0 * K3 / 3600   # hourly battery check while hibernating
 
 
-def day_load(fw, p, sched):
-    """Battery mAh per day, PMS mAh per day and the event counts for one schedule."""
+def day_load(fw, p, sched, ack_s=0.0, read_scale=1.0):
+    """Battery mAh per day, PMS mAh per day and the event counts for one schedule.
+    ack_s adds a receive window after every report; read_scale multiplies the part of a read's
+    cost that isn't the PMS7003."""
     read_p, listen_p, pm, wifi = SCHEDULES[sched]
-    l_mah, l_s = listen_event(fw, p)
     r_mah, r_s, pms = read_event(fw, p, pm)
+    idle = CPU_MA[fw][p] if fw == "M1" else LIGHT_SLEEP_MA
+    r_mah = (r_mah - pms + ack_s * (idle + RADIO_RX_MA) * K3 / 3600) * read_scale + pms
+    r_s += ack_s
     reads = 86400 / read_p
-    listens = 86400 / listen_p - reads * math.ceil(r_s / listen_p)
-    # A request is heard only if a listen falls inside the gateway's window. Serving it costs
-    # one extra full read, which starts after that listen and may cover the next slot.
-    served = REQUESTS[p] * min(1.0, GATEWAY_WINDOW_S / listen_p)
-    listens -= served * math.floor((LISTEN_S[fw][1] + r_s) / listen_p)
+    if listen_p is None:
+        l_mah, l_s, listens, served = 0.0, 0.0, 0.0, 0.0
+    else:
+        l_mah, l_s = listen_event(fw, p)
+        listens = 86400 / listen_p - reads * math.ceil(r_s / listen_p)
+        # A request is heard only if a listen falls inside the gateway's window. Serving it
+        # costs one extra full read, which starts after that listen and may cover the next slot.
+        served = REQUESTS[p] * min(1.0, GATEWAY_WINDOW_S / listen_p)
+        listens -= served * math.floor((LISTEN_S[fw][1] + r_s) / listen_p)
     awake_h = (listens * l_s + (reads + served) * r_s) / 3600
     mah = (listens * l_mah + (reads + served) * r_mah + FLOOR_UA[p] / 1000 * (24 - awake_h)
            + (WIFI_MAH if wifi else 0.0))
@@ -238,30 +254,35 @@ def now_load():
     return mah, reads * pms, reads
 
 
-# Load profiles: (firmware, 0 nominal / 1 pessimistic, schedules from normal to survival).
+# Load profiles: (firmware, 0 nominal / 1 pessimistic, schedules from normal to survival,
+# receive window after each report in s).
+ADAPTIVE = ("normal", "lean", "survival")
 PROFILES = {
-    "M1 nominal": ("M1", 0, ("normal",)),
-    "M1 pessimistic": ("M1", 1, ("normal",)),
-    "M2 nominal": ("M2", 0, ("normal",)),
-    "M2 pessimistic": ("M2", 1, ("normal",)),
-    "M2 adaptive": ("M2", 0, ("normal", "lean", "survival")),
-    "M2 adaptive pessimistic": ("M2", 1, ("normal", "lean", "survival")),
-    "M2 adaptive, 2-min listen": ("M2", 0, ("normal", "lean, 2-min listen", "survival, 2-min listen")),
-    "M2 adaptive, 2-min listen, pessimistic": ("M2", 1, ("normal", "lean, 2-min listen",
-                                                          "survival, 2-min listen")),
+    "M1 nominal, 1-min listen": ("M1", 0, ("normal, 1-min listen",), 0.0),
+    "M1 pessimistic, 1-min listen": ("M1", 1, ("normal, 1-min listen",), 0.0),
+    "M1 reads, no listen": ("M1", 0, ("normal",), 0.0),
+    "M1 reads, no listen, pessimistic": ("M1", 1, ("normal",), 0.0),
+    "M2 nominal": ("M2", 0, ("normal",), 0.0),
+    "M2 pessimistic": ("M2", 1, ("normal",), 0.0),
+    "M2 adaptive": ("M2", 0, ADAPTIVE, 0.0),
+    "M2 adaptive pessimistic": ("M2", 1, ADAPTIVE, 0.0),
+    "M2 adaptive, 2 s ACK window": ("M2", 0, ADAPTIVE, ACK_S),
+    "M2 adaptive pessimistic, 2 s ACK window": ("M2", 1, ADAPTIVE, ACK_S),
+    "M2 adaptive pessimistic, revision-2 listening": (
+        "M2", 1, ("normal, 1-min listen", "lean, 5-min listen", "survival, 15-min listen"), 0.0),
 }
 
 
-def r2_modes(profile):
+def r2_modes(profile, read_scale=1.0):
     """Hourly Wh and PMS Wh per mode, plus the hibernation and UVLO-off drains in Wh/h."""
     if profile == "M1 now (19.4-min cycle)":
         mah, pms, _r = now_load()
         modes, p = [(mah / 24 * V_NOM / 1000, pms / 24 * V_NOM / 1000)], 0
     else:
-        fw, p, scheds = PROFILES[profile]
+        fw, p, scheds, ack_s = PROFILES[profile]
         modes = []
         for s in scheds:
-            mah, pms, _c = day_load(fw, p, s)
+            mah, pms, _c = day_load(fw, p, s, ack_s, read_scale)
             modes.append((mah / 24 * V_NOM / 1000, pms / 24 * V_NOM / 1000))
     hib_wh = (FLOOR_UA[p] / 1000 + HIB_CHECK_MAH) * V_NOM / 1000
     return modes, hib_wh, OFF_UA[p] / 1e6 * V_NOM
@@ -274,19 +295,19 @@ def r2_modes(profile):
 #   soc_bias. The revision-2 values are 45/55 % and 20/25 % raised by the 15 % estimate error,
 #   so an estimate that reads 15 % high still enters survival at a true 20 %. That covers the
 #   longest stretch without charging (about 60 days at the energy corner) at the pessimistic
-#   survival load, 12.6 mAh/day, with today's pack.
+#   survival load, 10.1 mAh/day without listening, with today's pack.
 # hib_at / restart: hibernate below, resume in the lowest schedule above. These two use the
 #   battery voltage near empty, where the curve is steep, so the model applies them to the true
-#   charge. release: the TPS3840 (3.1 V) lets the converter restart at about 3.3 V; the ESP32
-#   then boots into hibernation.
+#   charge. release: the TPS3840 (off below 3.05-3.15 V) lets the converter restart above
+#   3.23-3.37 V; the ESP32 then boots into hibernation.
 R1_POLICY = dict(lean=(0.40, 0.50), surv=(0.15, 0.20), hib_at=None, restart=0.05, release=0.05)
 R2_POLICY = dict(lean=(0.60, 0.70), surv=(0.35, 0.40), hib_at=0.03, restart=0.12, release=0.02)
 SOC_ERROR = 0.15             # the firmware's charge estimate may be off by this much either way (assumed)
 
 # Interlock trips at the NTC in deg C: (cold off, cold on, hot off, hot on), from
 # calc/interlock_trips.py. The energy corner puts every tolerance toward less charging.
-GATE_NOMINAL = (1.71, 2.11, 43.26, 43.04)
-GATE_CORNER = (2.69, 3.06, 42.16, 41.97)
+GATE_NOMINAL = (1.71, 2.11, 42.64, 42.42)
+GATE_CORNER = (2.71, 3.09, 41.52, 41.33)
 GATE_R1 = (1.0, 1.0, 44.0, 44.0)           # revision 1: stateless +1 / +44 C
 
 
@@ -398,8 +419,8 @@ def summarize(full, longest):
     )
 
 
-def run_case(rows, profile, policy=R2_POLICY, **kw):
-    modes, hib_wh, off_wh = r2_modes(profile)
+def run_case(rows, profile, policy=R2_POLICY, read_scale=1.0, **kw):
+    modes, hib_wh, off_wh = r2_modes(profile, read_scale)
     full, longest = simulate(rows, modes, hib_wh, off_wh, policy, **kw)
     return summarize(full, longest)
 
@@ -431,6 +452,46 @@ def required_ah(rows, profile, estimate_error=False, **kw):
         else:
             hi = mid
     return hi
+
+
+def read_cost_limit(rows, profile, ah, **kw):
+    """Largest cost of a full read with PM (mAh, battery side) at which the profile still has no
+    outage hour in any full season, with the charge estimate off by up to SOC_ERROR. The part of
+    every read that isn't the PMS7003 is scaled alike; the PMS share, floor, Wi-Fi allowance and
+    policy stay as they are."""
+    fw, p, scheds, ack_s = PROFILES[profile]
+    full = day_load(fw, p, scheds[0], ack_s)[2]["read"]
+    pms = read_event(fw, p)[2]
+
+    def passes(scale):
+        return worst_case(rows, profile, ah=ah, read_scale=scale, **kw)[1]["n_out"] == 0
+    lo, hi = 0.0, 1.0
+    while passes(hi):
+        lo, hi = hi, hi * 2
+        if hi > 64:
+            return None
+    while hi - lo > 0.005:
+        mid = (lo + hi) / 2
+        if passes(mid):
+            lo = mid
+        else:
+            hi = mid
+    return lo * (full - pms) + pms
+
+
+def cold_hours(rows):
+    """Per full season: hours with air below -10 C and below -20 C; and the coldest hour."""
+    per = {}
+    coldest = (99.0, None)
+    for day, _p, _g, t, season in rows:
+        if not 2005 <= season <= 2022:
+            continue
+        c = per.setdefault(season, [0, 0])
+        c[0] += t < -10.0
+        c[1] += t < -20.0
+        if t < coldest[0]:
+            coldest = (t, day)
+    return per, coldest
 
 
 def longest_without_charge(rows, trips, reset="night"):
@@ -521,7 +582,12 @@ def per_winter(r):
     return f"{r['lean_days'] / r['n']:.1f} / {r['surv_days'] / r['n']:.1f}"
 
 
+def fmt_mah(mah):
+    return "> 64 x the event cost" if mah is None else f"{mah:.2f} mAh"
+
+
 def cmd_scenarios(path_sw45, path_sw70, path_s45):
+    global FLOOR_UA
     inp45, sw45 = load_series(path_sw45)
     inp70, sw70 = load_series(path_sw70)
     inps, s45 = load_series(path_s45)
@@ -538,18 +604,18 @@ def cmd_scenarios(path_sw45, path_sw70, path_s45):
             s_mah, s_s, _x = read_event(fw, p, pm=False)
             print(f"  {fw} {tag:11s} listen {l_s:4.1f} s {l_mah * 1000:6.1f} uAh | full read {r_s:5.1f} s "
                   f"{r_mah:.3f} mAh (PMS {pms:.3f}) | read without PM {s_s:4.1f} s {s_mah:.3f} mAh")
+    ack = ACK_S * (LIGHT_SLEEP_MA + RADIO_RX_MA) * K3 / 3600
+    print(f"  M2 receive window after a report, {ACK_S:.0f} s (sensitivity): {ack * 1000:.1f} uAh")
     print()
-    print("| Profile | Schedule | Full reads / day | Listens / day | Requests heard | Requests served / day "
-          "| mAh / day | Wh / day |")
-    print("|---|---|---|---|---|---|---|---|")
-    for prof, (fw, p, scheds) in PROFILES.items():
+    print("| Profile | Schedule | Full reads / day | Listens / day | Requests served / day | mAh / day | Wh / day |")
+    print("|---|---|---|---|---|---|---|")
+    for prof, (fw, p, scheds, ack_s) in PROFILES.items():
         for s in scheds:
-            mah, _pms, c = day_load(fw, p, s)
-            heard = min(1.0, GATEWAY_WINDOW_S / SCHEDULES[s][1])
-            print(f"| {prof} | {s} | {c['reads']:.0f} | {c['listens']:.0f} | {heard * 100:.0f} % | "
-                  f"{c['served']:.1f} | {mah:.1f} | {mah * V_NOM / 1000:.3f} |")
+            mah, _pms, c = day_load(fw, p, s, ack_s)
+            print(f"| {prof} | {s} | {c['reads']:.0f} | {c['listens']:.0f} | {c['served']:.1f} | {mah:.1f} | "
+                  f"{mah * V_NOM / 1000:.3f} |")
     mah, _pms, reads = now_load()
-    print(f"| M1 now (19.4-min cycle) | today | {reads:.1f} | {reads * 15:.0f} | 100 % | 0 | {mah:.1f} | "
+    print(f"| M1 now (19.4-min cycle) | today | {reads:.1f} | {reads * 15:.0f} | 0 | {mah:.1f} | "
           f"{mah * V_NOM / 1000:.3f} |")
     for p, tag in ((0, "typical"), (1, "pessimistic")):
         print(f"  Hibernation {tag}: {(FLOOR_UA[p] / 1000 + HIB_CHECK_MAH) * 24:.2f} mAh/day; "
@@ -565,31 +631,39 @@ def cmd_scenarios(path_sw45, path_sw70, path_s45):
                                 ("revision-1 gate +1 / +44 C, stateless", GATE_R1, "retain")):
         days, first = longest_without_charge(sw45, trips, reset)
         print(f"Longest stretch without charging, 45 deg, azimuth 233 deg, {label}: {days:.1f} d from {first}")
+    per, coldest = cold_hours(sw45)
+    b10 = {k: v[0] for k, v in per.items()}
+    b20 = {k: v[1] for k, v in per.items()}
+    w10, w20 = max(b10, key=b10.get), max(b20, key=b20.get)
+    print(f"Air temperature (PVGIS T2m), 2005/06-2022/23: below -10 C {sum(b10.values()) / len(per):.0f} h per "
+          f"winter on average, at most {b10[w10]} h ({w10}/{(w10 + 1) % 100:02d}); below -20 C "
+          f"{sum(b20.values()) / len(per):.1f} h, at most {b20[w20]} h ({w20}/{(w20 + 1) % 100:02d}); coldest "
+          f"hour {coldest[0]:.1f} C on {coldest[1]}")
     print()
 
     corner = dict(trips=GATE_CORNER)
+    ah8f = 8 * CELL_AH * 0.8
     cases = [
         ("Revision-1 gate: stateless +1 / +44 C", sw45, dict(trips=GATE_R1, reset="retain")),
         ("Interlock nominal (+1.7 off / +2.1 on), reset at night", sw45, {}),
         ("Interlock energy corner (+2.7 / +3.1), reset at night", sw45, corner),
-        ("Energy corner, charge estimate 15 % high", sw45, dict(corner, soc_bias=SOC_ERROR)),
-        ("Energy corner, charge estimate 15 % low", sw45, dict(corner, soc_bias=-SOC_ERROR)),
         ("Review sensitivity +1 / +4 C, state kept overnight", sw45,
          dict(trips=(1.0, 4.0, 43.0, 40.0), reset="retain")),
         ("Energy corner, tilt 70 deg", sw70, corner),
         ("Energy corner, panel due south", s45, corner),
     ]
-    cols = ("M1 nominal", "M1 pessimistic", "M2 nominal", "M2 adaptive", "M2 adaptive pessimistic")
-    print("Lean and survival days are totals over the 18 winters.")
-    print("| Case (10 W, 45 deg, azimuth 233 deg, 10.2 Ah unless stated) | " + " | ".join(cols) + " |")
+    cols = ("M2 adaptive", "M2 adaptive pessimistic", "M2 adaptive pessimistic, 2 s ACK window",
+            "M2 pessimistic", "M1 reads, no listen, pessimistic")
+    print("Adaptive profiles: the worst of a charge estimate 15 % low, exact and 15 % high.")
+    print(f"| Case (10 W, 45 deg, azimuth 233 deg, 8 cells 20 % faded = {ah8f:.2f} Ah) | " + " | ".join(cols) + " |")
     print("|---" * (len(cols) + 1) + "|")
     for label, rows, kw in cases:
-        cells = [fmt_cell(run_case(rows, prof, **kw), "adaptive" in prof) for prof in cols]
+        cells = [fmt_cell(worst_case(rows, prof, ah=ah8f, **kw)[1]) for prof in cols]
         print(f"| {label} | " + " | ".join(cells) + " |")
     print()
 
     print("Smallest nominal pack with no outage hour in 2005/06-2022/23 (10 W, 45 deg, azimuth 233 deg),")
-    print("as Ah and as 3.4 Ah cells in parallel, new (and with 20 % capacity fade):")
+    print(f"as Ah and as {CELL_AH} Ah cells in parallel, new (and with 20 % capacity fade):")
     print("| Load profile | Interlock nominal | Energy corner | Energy corner, charge estimate off by up to 15 % |")
     print("|---|---|---|---|")
     for prof in ("M1 now (19.4-min cycle)",) + tuple(PROFILES):
@@ -601,55 +675,72 @@ def cmd_scenarios(path_sw45, path_sw70, path_s45):
         print(f"| {prof} | " + " | ".join(cells) + " |")
     print()
 
-    packs = [(3, 1.0), (5, 1.0), (8, 1.0), (8, 0.8), (14, 1.0), (14, 0.8)]
-    print("Pack options at the energy corner (10 W, 45 deg, azimuth 233 deg). Adaptive profiles: the worst")
-    print("result over a charge estimate 15 % low, exact and 15 % high, then lean / survival days per winter")
-    print("for each of the three.")
-    print("| Pack | M2 adaptive | lean / survival d per winter (low / exact / high) | M2 adaptive pessimistic "
-          "| lean / survival d per winter (low / exact / high) | M2 nominal, fixed 15 min | "
-          "M2 pessimistic, fixed 15 min | M1 now |")
-    print("|---|---|---|---|---|---|---|---|")
-    for n, health in packs:
-        ah = n * CELL_AH * health
-        label = f"{n} cells, {ah:.1f} Ah" + (" (20 % faded)" if health < 1 else "")
-        cells = []
-        for prof in ("M2 adaptive", "M2 adaptive pessimistic"):
-            runs, worst = worst_case(sw45, prof, ah=ah, **corner)
-            cells += [fmt_cell(worst), ", ".join(per_winter(r) for r in runs)]
-        for prof in ("M2 nominal", "M2 pessimistic", "M1 now (19.4-min cycle)"):
-            cells.append(fmt_cell(run_case(sw45, prof, ah=ah, **corner)))
-        print(f"| {label} | " + " | ".join(cells) + " |")
+    packs = [(3, 1.0), (3, 0.8), (8, 1.0), (8, 0.8), (14, 1.0), (14, 0.8)]
+    print("Pack options at the energy corner (10 W, 45 deg, azimuth 233 deg), each with the charge estimate")
+    print("15 % low / exact / 15 % high. Outage days are totals over the 18 winters; lean and survival days")
+    print("are per winter.")
+    print("| Profile | Pack | Outage days | Lowest charge | Lean d per winter | Survival d per winter |")
+    print("|---|---|---|---|---|---|")
+    for prof in ("M2 adaptive pessimistic", "M2 adaptive pessimistic, 2 s ACK window", "M2 adaptive"):
+        for n, health in packs:
+            ah = n * CELL_AH * health
+            label = f"{n} cells, {ah:.2f} Ah" + (" (20 % faded)" if health < 1 else "")
+            runs, _worst = worst_case(sw45, prof, ah=ah, **corner)
+            out = " / ".join(f"{r['out_days']:.0f}" for r in runs)
+            socs = " / ".join(f"{r['low_min_soc'] * 100:.0f} %" for r in runs)
+            lean = " / ".join(f"{r['lean_days'] / r['n']:.1f}" for r in runs)
+            surv = " / ".join(f"{r['surv_days'] / r['n']:.1f}" for r in runs)
+            print(f"| {prof} | {label} | {out} | {socs} | {lean} | {surv} |")
     print()
 
-    print("Keeping every gateway request heard (listen every 2 min in lean and survival), energy corner:")
-    print("| Pack | M2 adaptive, 2-min listen | lean / survival d per winter (low / exact / high) "
-          "| M2 adaptive, 2-min listen, pessimistic | lean / survival d per winter (low / exact / high) |")
-    print("|---|---|---|---|---|")
-    for n, health in packs:
+    print("Largest full-read cost (battery side, with PM) that still leaves no outage hour: energy corner,")
+    print("charge estimate off by up to 15 %, pessimistic floor and PMS7003 (1.464 mAh per read), the rest of")
+    print("every read scaled alike. For comparison, a pessimistic full read costs 1.782 mAh in M2 and 2.791 mAh")
+    print("in M1.")
+    print("| Pack | Adaptive 15 / 30 / 60 min, no listen | Fixed 15 min, no listen |")
+    print("|---|---|---|")
+    for n, health in ((8, 1.0), (8, 0.8), (14, 1.0), (14, 0.8)):
         ah = n * CELL_AH * health
-        label = f"{n} cells, {ah:.1f} Ah" + (" (20 % faded)" if health < 1 else "")
-        cells = []
-        for prof in ("M2 adaptive, 2-min listen", "M2 adaptive, 2-min listen, pessimistic"):
-            runs, worst = worst_case(sw45, prof, ah=ah, **corner)
-            cells += [fmt_cell(worst), ", ".join(per_winter(r) for r in runs)]
-        print(f"| {label} | " + " | ".join(cells) + " |")
+        label = f"{n} cells, {ah:.2f} Ah" + (" (20 % faded)" if health < 1 else "")
+        a = read_cost_limit(sw45, "M2 adaptive pessimistic", ah, **corner)
+        f = read_cost_limit(sw45, "M2 pessimistic", ah, **corner)
+        print(f"| {label} | {fmt_mah(a)} | {fmt_mah(f)} |")
     print()
 
-    print("Low-energy recovery at the energy corner, today's 10.2 Ah pack: hibernation entries, restarts")
+    print(f"Sleep floor at R-P7's limit (b): {FLOOR_LIMIT_UA} uA on the cells instead of {FLOOR_UA[1]} uA.")
+    print("M2 adaptive pessimistic at the energy corner, charge estimate 15 % low / exact / 15 % high.")
+    print("| Pack | Outage days | Lowest charge | Largest full-read cost, adaptive |")
+    print("|---|---|---|---|")
+    saved = FLOOR_UA
+    FLOOR_UA = (FLOOR_UA[0], FLOOR_LIMIT_UA)
+    try:
+        for n in (8, 14):
+            ah = n * CELL_AH * 0.8
+            runs, _worst = worst_case(sw45, "M2 adaptive pessimistic", ah=ah, **corner)
+            out = " / ".join(f"{r['out_days']:.0f}" for r in runs)
+            socs = " / ".join(f"{r['low_min_soc'] * 100:.0f} %" for r in runs)
+            a = read_cost_limit(sw45, "M2 adaptive pessimistic", ah, **corner)
+            print(f"| {n} cells, {ah:.2f} Ah (20 % faded) | {out} | {socs} | {fmt_mah(a)} |")
+    finally:
+        FLOOR_UA = saved
+    print()
+
+    ah3 = 3 * CELL_AH
+    print(f"Low-energy recovery at the energy corner, today's pack ({ah3:.2f} Ah): hibernation entries, restarts")
     print("into the lowest schedule, UVLO cut-offs (TPS3840) and the longest outage, over 18 winters.")
     print("| Load profile | Hibernations | Restarts | UVLO cut-offs | Longest outage |")
     print("|---|---|---|---|---|")
     no_hib = dict(R2_POLICY, hib_at=None)
-    rows = [(prof, prof, {}) for prof in ("M1 now (19.4-min cycle)", "M1 nominal", "M1 pessimistic",
+    rows = [(prof, prof, {}) for prof in ("M1 now (19.4-min cycle)", "M1 nominal, 1-min listen",
+                                          "M1 reads, no listen", "M1 reads, no listen, pessimistic",
                                           "M2 nominal", "M2 pessimistic", "M2 adaptive",
                                           "M2 adaptive pessimistic")]
     rows += [(f"{prof}, firmware never hibernates (TPS3840 only)", prof, dict(policy=no_hib))
-             for prof in ("M1 nominal", "M2 pessimistic")]
+             for prof in ("M1 reads, no listen", "M2 pessimistic")]
     for label, prof, kw in rows:
-        _runs, r = worst_case(sw45, prof, **dict(corner, **kw))
+        _runs, r = worst_case(sw45, prof, ah=ah3, **dict(corner, **kw))
         longest = f"{r['longest'][0]:.1f} d from {r['longest'][1]}" if r["longest"][1] else "none"
         print(f"| {label} | {r['hibs']} | {r['restarts']} | {r['trips']} | {longest} |")
-
 
 if __name__ == "__main__":
     if len(sys.argv) >= 3 and sys.argv[1] == "codex":
