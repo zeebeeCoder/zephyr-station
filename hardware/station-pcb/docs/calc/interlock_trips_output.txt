@@ -1,39 +1,49 @@
-Output of interlock_trips.py for F1 revision 3, run 26.10.2026 (computed, not measured).
-interlock_trips.py SHA-256: 59f980f8ab429a2a09fee318da387264c72b40343845e251606fcaf463546365
+Output of interlock_trips.py for F1 revision 4, run 26.10.2026 (computed, not measured).
+interlock_trips.py SHA-256: d86cebffac9d1dc6578ead47758f73b8403d4ab83bb233c4adf418fa89d672f6
 
 $ python3 -I docs/calc/interlock_trips.py
 Resistors: RS 12.0 k, RC1 10.0 k, RC2 24.3 k, RHYS 3.32 M, RH1 10.0 k, RH2 4.02 k; tolerance +-0.175 % (RHYS +-1 %)
 NTC current at the cold trip: 82 uA, 0.198 mW -> self-heating 0.099 K in still air (allowance 0.1 K)
 
-VREG bands: regulated 3.2-3.4 V; U4 static 2.955-3.4 V (lowest VIT-); U4 falling 2.659-3.4 V (10 % below the lowest VIT-)
+VREG bands: regulated 3.2-3.4 V; U4 static 2.955-3.4 V (lowest VIT-); falling floor 2.6530-3.4 V
+  Floor: 10 % below the lowest VIT- (2.6595 V), less 110 V/s for U4's 30 us detect delay and 29.5 us for Q9 / Q10's gate to fall to 0.3 V
 
-| Trip | Nominal, deg C | Electrical worst case, VREG regulated | VREG down to U4's threshold | Safety corner, VREG falling to 10 % below it, plus the falling-rail error |
+| Trip | Nominal, deg C | Electrical worst case, VREG regulated | VREG down to U4's threshold | Safety corner, VREG at the falling floor, plus the filter error |
 |---|---|---|---|---|
 | Cold off (cooling) | +1.71 | +0.75 to +2.69 | +0.72 to +2.71 | +0.04 (must be >= 0) |
 | Cold on (warming) | +2.11 | +1.11 to +3.06 | +1.09 to +3.09 | +0.42 |
 | Hot off (heating) | +42.64 | +41.55 to +43.72 | +41.52 to +43.76 | +44.34 (must be <= 45) |
 | Hot on (cooling) | +42.42 | +41.36 to +43.52 | +41.33 to +43.55 | +44.10 |
 
-Safety corners at VREG 2.955 V without the falling-rail error: cold off +0.12 C, hot off +44.26 C
+Unrounded safety corners: cold off +0.0380 C, hot off +44.3386 C
+Safety corners at VREG 2.955 V without the filter error: cold off +0.12 C, hot off +44.26 C
 Cold hysteresis: nominal 0.40 K, range 0.26-0.53 K
-Hot hysteresis: nominal 0.22 K, range 0.07-0.37 K
+Hot hysteresis: nominal 0.22 K, range 0.07-0.38 K
 Energy corner for the winter model (VREG down to U4's threshold): off +2.71 C, on +3.09 C; hot off +41.52 C, on +41.33 C
 Safety corners include NTC self-heating 0.1 K and 20 nA of leakage at V_T (0.17 mV, 0.006 K), both on the cold side only, and a 0.5 K NTC-to-cell gradient (all assumed).
 
-Input filters: R_IN 10.0 k and C_IN 1 nF on each V_T input, R_F1 20.0 k and C_IN on U1's tap, no capacitor on U2's tap (C0G +-5 %, resistors +-1 %)
-  U1: tap 25.5-28.6 us, slower than its V_T input at any temperature (23.2 us at most): yes
-  U2: tap 14 ns at most, faster than its V_T input at any temperature (9.4 us at least): yes
-  So a rising VREG can only make OUT1 and OUT2 read 'do not charge'.
-  Fastest VREG fall: 1.0 mA / 10 uF = 100 V/s (computed load 0.72 mA at 3.4 V, 0.62 mA at 2.955 V)
-  Error while it falls: U1 0.81 mV = 0.030 K, U2 0.41 mV = 0.019 K at 2.659 V (included above)
-  VREG takes at least 5.4 ms to fall from 3.2 V to 2.659 V; in U4's 30 us detect delay it falls at most 3.0 mV
+Input filters: C_T 680 pF on V_T (plus 50 pF at most of ESD diode, cable and board); R_IN 10.0 k into each comparator input, no capacitor; R_F1 27.0 k and C_F1 330 pF on U1's tap; none on U2's tap (C0G +-5 %, resistors +-1 %)
+  Comparator inputs: 1-10 pF to AGND each, 0-8 pF between the two; U1's tap node 0.5-5 pF (assumed)
+  VREG slope: rise <= 500 mA / 10 uF = 50 V/ms; fall <= 1.1 mA / 10 uF = 110 V/s (load 1.051 mA at 3.4 V with every gate charging, 0.738 mA steady)
+  Solved as one coupled network, for any VREG history inside those slopes:
+  U1: NTC 26.43-32.17 k (trip band +-0.25 K), 2560 tolerance corners plus 300 random points. Mean delays IN+ (tap) 10.622-12.290 us, IN- (V_T) 5.347-7.008 us
+    worst error 0.856 mV (0.452 mV from the rise term, 0.405 mV from the fall term) = 0.032 K at 2.653 V (corners alone 0.856 mV; included above). Beyond the band, toward open: static distance exceeds the error by >= 59 mV
+  U2: NTC 4.43-5.24 k (trip band +-0.25 K), 640 tolerance corners plus 300 random points. Mean delays IN+ (V_T) 2.086-2.935 us, IN- (tap) 0.001-0.030 us
+    worst error 0.392 mV (0.312 mV from the rise term, 0.080 mV from the fall term) = 0.018 K at 2.653 V (corners alone 0.392 mV; included above). Beyond the band, toward short: static distance exceeds the error by >= 59 mV
+  Check, revision 3 solved as one network at 0 C (nominal NTC): V_T inputs' slowest time constant 27.462 us against U1's tap 27.069 us, so its ordering claim failed (R4-M1)
 
 U4 TPS3840PL30: off below 2.955-3.045 V, on above 3.030-3.170 V (regulated VREG >= 3.2 V); delay after a full reset 0.29-1.05 s with CT 0.8-1.2 uF
+  Inhibit latency: 30 us detect + 29.5 us gate (100 k || 1000 k, 100 pF at most) = 59.5 us, VREG falling at most 6.5 mV meanwhile
+  Then, not part of the trip proof: Q3 off (|VGS| <= 0.1 V) within 479 us with <= 1 nF, plus each charger's own response
+Gate drive through 100 k / 1000 k (factor >= 0.9074), from guaranteed VOH:
+  regulated VREG 3.2 V: U4 >= 2.323 V, comparators >= 2.722 V; less a source rise of <= 110 mV, the weakest VGS is 2.213 V (R_on specified at 1.8 V)
+  VREG at U4's threshold 2.955 V: U4 >= 2.145 V, comparators >= 2.500 V; less a source rise of <= 110 mV, the weakest VGS is 2.035 V (R_on specified at 1.8 V)
+  (U4's VOH is specified for VDD above VIT+; at VREG 2.955 V it is taken to scale the same way)
 
 U3 battery overvoltage: LM4041-B 1.225 V (1.2189-1.2311 V), divider 768 k / 301 k
   nominal: off above 4.361 V, on again below 4.340 V
   worst case: off above 4.290 to 4.430 V, on again below 4.272 to 4.412 V; hysteresis 7-28 mV at the battery
-  LM4041 current through 24.3 k: 70 uA at VREG 2.955 V (minimum operating 65 uA), 91 uA at 3.4 V
+  LM4041 current through 20.0 k: 70.4 uA at the falling floor 2.653 V (minimum operating 65 uA), 110 uA at 3.4 V
   with the TLV3012B's own reference instead (divider 750 k / 301 k): off above 4.219 to 4.469 V (not used)
 LT3652 float: 4.174-4.226 V at 25 C, 4.146-4.254 V over the chip's temperature range; BQ25170: 4.179-4.221 V at 25 C
 Margin from the highest LT3652 float to the lowest U3 trip: 36 mV

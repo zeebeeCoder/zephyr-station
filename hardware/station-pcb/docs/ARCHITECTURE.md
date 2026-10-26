@@ -1,8 +1,8 @@
 # Station PCB architecture
 
-Status: **F1 revision 3 for review**, 26.10.2026, written by `mobric/mikolaj-claude-60` (called `mobric/pcb-opus-5-5` until a restart).
-- It revises revision 2 (0d038c4) after the Codex third review in [reviews/F1-codex-r3.md](reviews/F1-codex-r3.md). The item-by-item response is in [reviews/F1-response-r3.md](reviews/F1-response-r3.md). The earlier responses are [reviews/F1-response-r2.md](reviews/F1-response-r2.md) and [reviews/F1-response.md](reviews/F1-response.md).
-- It folds in mobric's answers to questions 15, 16, 19, 22 and 23 and the choice of 8 cells, relayed by the coordinator on 26.10.2026 (§ 8).
+Status: **F1 revision 4 for review**, 26.10.2026, written by the designer session `mobric/pcb-design-2` (earlier `mobric/pcb-design`, `mobric/mikolaj-claude-60` and `mobric/pcb-opus-5-5`; the same session renamed).
+- It revises revision 3 (8e02e77) after the Codex fourth review in [reviews/F1-codex-r4.md](reviews/F1-codex-r4.md). The item-by-item response is in [reviews/F1-response-r4.md](reviews/F1-response-r4.md). The earlier responses are [reviews/F1-response-r3.md](reviews/F1-response-r3.md), [reviews/F1-response-r2.md](reviews/F1-response-r2.md) and [reviews/F1-response.md](reviews/F1-response.md).
+- It folds in mobric's answers to questions 15, 16, 19, 22 and 23 and the choice of 8 cells, and, new in revision 4, Q24 (a) and Q25 (a), all relayed by the coordinator on 26.10.2026 (§ 8).
 - Approved so far:
   - D1 (25.10.2026);
   - R1, decided (a) (see [STATUS.md](STATUS.md));
@@ -28,7 +28,7 @@ flowchart LR
     USB["USB-C host or charger"]
   end
   subgraph PCB[Station PCB]
-    PIN["Panel input<br/>fuse, 5.0SMDJ28CA (≤ 36.4 V),<br/>TPS26600: reverse blocking,<br/>UVLO 15 V, OVP 31–34 V"]
+    PIN["Panel input<br/>fuse, SM15T33CA (≤ 39.4 V),<br/>TPS26600: reverse blocking,<br/>UVLO 15 V, OVP 31–34 V"]
     CHG["Solar charger LT3652<br/>40 V abs max, SHDN gated<br/>VIN_REG 18.7 V, 1.47 A, 4.2 V, C/10"]
     USBC["USB-C sink<br/>5.1 kΩ CC, ESD"]
     UCHG["USB charger BQ25170<br/>347–444 mA, ISET gated,<br/>charging jumper (Q24)"]
@@ -73,9 +73,9 @@ flowchart LR
 ```
 
 **Power path.**
-- **Panel input.** The panel reaches the solar charger through a fuse, a 5.0SMDJ28CA TVS (5 kW) and a TPS26600 protection switch (D5).
+- **Panel input.** The panel reaches the solar charger through a fuse, an SM15T33CA TVS (1.5 kW) and a TPS26600 protection switch (D5).
   - The TPS26600 blocks a reversed panel and night backflow. It keeps the charger's input off until the panel is above about 15 V (UVLO) and opens above 31–34 V (OVP). It replaces revision 1's 60 V Schottky.
-  - The TVS stays below its breakdown at the coldest Voc. During the defined surge it alone keeps the TPS26600's input, and so the charger's VIN, at ≤ 36.4 V, below the LT3652's 40 V rating. Nothing depends on the switch's timing (R3-M2).
+  - The TVS stays below its breakdown at the coldest Voc. During the defined surge it alone keeps the TPS26600's input at ≤ 39.3 V, and so the charger's VIN at ≤ 39.4 V, below the LT3652's 40 V rating. The bound uses ST's published maximum-clamp formula, and nothing depends on the switch's timing (R3-M2, R4-M2).
 - **Interlock.** It runs only while the panel or USB supplies power, so it draws nothing from the battery. Three TLV3012B comparators check two things: that the NTC on the pack reads between +1.7 and +42.6 °C (nominal trips), and that the cells are below 4.36 V. A TPS3840 checks that the interlock's own rail is valid (R3-M1). Series FETs combine the four outputs (an AND) into the solar charger's SHDN and the USB charger's ISET return.
   - Charging is blocked by default: interlock unpowered, starting (power-on reset), its rail below the supervisor's threshold or browning out, NTC open or shorted, cells overcharged.
 - **USB.** VBUS feeds only the CH343P, the interlock supply and, through a charging jumper that is open by default (Q24), the USB charger.
@@ -93,7 +93,7 @@ flowchart LR
 | Block | Choice | Main reason | Decision |
 |---|---|---|---|
 | Solar charger | LT3652, VIN_REG for 18.7 V, gated through SHDN, C/10 termination | 40 V absolute maximum; documented enable pin | D5, **approved 25.10.2026** |
-| Panel input | Fuse + 5.0SMDJ28CA + TPS26600 (reverse blocking, UVLO, OVP) | The TVS alone bounds the charger's input below its 40 V rating during the defined surge; the switch blocks reverse polarity and backflow | D5 |
+| Panel input | Fuse + SM15T33CA + TPS26600 (reverse blocking, UVLO, OVP) | The TVS alone bounds the charger's input below its 40 V rating during the defined surge; the switch blocks reverse polarity and backflow | D5 |
 | Charge interlock | MF52A NTC and two TLV3012B as a window, a third TLV3012B for battery overvoltage, a TPS3840 for a valid rail, series-FET AND, off by default | The B variant's power-on reset holds its output low (datasheet); the supervisor bounds the rail the trips are proven for; documented enable inputs on both chargers | D5 |
 | USB charging | BQ25170, ISET 750 Ω through the AND chain and a charging jumper, open by default (Q24) | Open ISET means no charge (datasheet); ≤ 444 mA including the ±10 % gain tolerance; the jumper keeps USB inside every host state | D5 |
 | Cell protection | On-board and self-sufficient. The pack's board stays but isn't relied on | Its IC is unmarked (answer 20) | D5.2 |
@@ -172,7 +172,7 @@ The third column holds the datasheet maximum where one is published, otherwise a
 | BQ25170 battery drain, no VBUS | 0.35 µA | 0.6 µA | datasheet [BQ] |
 | TPS3840PL31 supervisor on VBAT | 0.3 µA | 0.7 µA | datasheet [SV] |
 | Battery-overvoltage divider and its switch Q8, interlock off | 0 | 1 µA | assumed: FET off-state leakage; F2 checks the chosen part at 4.2 V |
-| Interlock rail VREG: three TLV3012B, the TPS3840PL30, LM4041, NTC and tap dividers, FET gates | about 0.6 mA | 0.72 mA (NTC at about +66 °C, VREG 3.4 V) | computed ([calc/interlock_trips.py](calc/interlock_trips.py)); drawn from the panel or VBUS only, never from the battery |
+| Interlock rail VREG: three TLV3012B, the TPS3840PL30, LM4041, NTC and tap dividers, FET gates | about 0.6 mA | 0.74 mA (NTC at about +66 °C, VREG 3.4 V); ≤ 1.05 mA while every gate charges. The LDO itself draws ≤ 25 µA more from its input ([T7]) | computed ([calc/interlock_trips.py](calc/interlock_trips.py)); drawn from the panel or VBUS only, never from the battery |
 | TPS631000 quiescent current, not switching | 0.15 µA at VIN, 8 µA at VOUT | 6.1 µA at VIN; none published at VOUT | datasheet [T1] §5.5. The VOUT share is a 3.3 V load and is converted like the rest of the rail |
 | TPS631000 shut down (EN low: the UVLO holds it off) | 0.5 µA | 0.9 µA | datasheet [T1], at 3.8 V and 25 °C |
 | TPS631000 feedback divider 511 kΩ / 91 kΩ | 5.5 µA | — | datasheet [T1] Table 7-5 values; current computed |
@@ -181,10 +181,10 @@ The third column holds the datasheet maximum where one is published, otherwise a
 | SENSOR_3V3 load switch TPS22917, off | 0.01 µA | 0.1 µA | datasheet [LS] §7.5, −40 to 85 °C |
 | External protection board | 3 µA | 6 µA | assumed: DW01A at 3.9 V, 25 °C (datasheet). The board's IC is unmarked (answer 20), so DW01A-class is assumed. Nothing relies on it (D5.2) |
 | Leakage at the battery node: ESD/TVS parts, capacitors, board | 0.5 µA | 2 µA | assumed allowance. Every other ESD/TVS part sits on a net that is unpowered in sleep. Low-leakage ESD parts are rated ≤ 0.1–0.15 µA at stand-off (datasheets [U1], [U2]) |
-| Cells | Samsung INR18650-35E: 3.35 Ah minimum, 3.45 Ah typical; 10.05 Ah today (1S3P). The model uses the minimum | — | owner/photo: the model (answer 19); datasheet [35E]: capacity at 0.2C |
-| Cell limits | charge 0 to 45 °C, discharge −10 to +60 °C; charge ≤ 1.5 A per cell at 4.20 V; cut-off 2.50 V; storage −20 °C at the coldest | — | datasheet [35E] |
+| Cells | Samsung INR18650-35E: 3.35 Ah minimum at 0.2C; 10.05 Ah today (1S3P). The model uses the minimum | — | owner/photo: the model (answer 19); datasheet [35E] (specification Ver 1.1): capacity at 0.2C |
+| Cell limits | charge 0 to 45 °C, discharge −10 to +60 °C (cell surface); charge at 4.20 V, 1.7 A standard, 1.02 A for cycle life, 2.0 A maximum per cell; cut-off 2.65 V; storage −20 °C at the coldest | — | datasheet [35E] (Ver 1.1, R4-m2) |
 | Air below the cell's limits at the site | below −10 °C: 152 h a winter on average, 444 h at most (2010/11); below −20 °C: 3.4 h on average, 25 h at most (2005/06); coldest hour −25.2 °C (23 Jan 2006) | — | model-derived (PVGIS T2m, 2005/06–2022/23, § 4.4) |
-| Li-ion self-discharge | 2 % of stored energy per month | 10 % in 30 days (LG MJ1 limit, an example cell) | assumed; 1–2 %/month is typical at 25 °C [BU]. Samsung's 35E specification gives no figure, only 98.0 % recovery after 10 days at 60 °C [35E] |
+| Li-ion self-discharge | 2 % of stored energy per month | 10 % in 30 days (LG MJ1 limit, an example cell) | assumed; 1–2 %/month is typical at 25 °C [BU]. Samsung's 35E specification gives no figure, only ≥ 95 % recovery after 20 days at 60 °C [35E] |
 | Charge interlock trips (cell temperature) | off below +1.71 °C, on above +2.11 °C; off above +42.64 °C, on below +42.42 °C | energy corner (interlock rail down to U4's threshold): +2.71 / +3.09 °C and +41.52 / +41.33 °C | computed, [calc/interlock_trips_output.txt](calc/interlock_trips_output.txt) (D5) |
 | Firmware's charge estimate | exact | 15 % of usable energy too high or too low | assumed (§ 6 item 10) |
 | Low-energy thresholds | hibernate below 3 %, resume above 12 %; TPS3840 off below 3.05–3.15 V, on again above 3.23–3.37 V (taken as 2 %) | — | assumed (hibernation, § 6 item 11; the voltage-to-energy mapping, R3-N2); datasheet (TPS3840 thresholds [SV]) |
@@ -259,11 +259,11 @@ All computed from the inputs in § 4.1, not measured.
   - Revision 2 proposed ≤ 100 µA at 3.7 V and 25 °C, and ≤ 150 µA at 3.0 V and +50 °C. The review pointed out that at 3.0 V the TPS3840 holds the converter off, so that test would measure the hardware-off state, not powered sleep.
   - mobric agreed in principle (answer 22). R-P7 now has one limit per state, for the board at the battery link:
     - **(a) powered, 3.7 V, 25 °C: ≤ 100 µA.** Estimate 52.8 µA typical, 97.4 µA high-side; 2.6 µA left.
-    - **(b) powered, 3.4 V, +50 °C: ≤ 136 µA.** 3.4 V is above the UVLO's highest release, 3.37 V (VIT− 3.1 V + 1.5 % plus 225 mV of hysteresis, [SV]), so the converter runs whatever the history. Estimate 120.2 µA high-side, plus up to 5 µA more from the catch diode at 50 °C (F2 limits it to ≤ 10 µA): 125.2 µA, leaving 10.8 µA for the ESP32's rise with temperature, for which there is no data.
+    - **(b) powered, 3.4 V, +50 °C: ≤ 132 µA** (136 µA in revision 3; lowered for R4-N1, as the coordinator asked). 3.4 V is above the UVLO's highest release, 3.37 V (VIT− 3.1 V + 1.5 % plus 225 mV of hysteresis, [SV]), so the converter runs whatever the history. Estimate 120.2 µA high-side, plus up to 5 µA more from the catch diode at 50 °C (F2 limits it to ≤ 10 µA): 125.2 µA, leaving 6.8 µA for the ESP32's rise with temperature, for which there is no data.
     - **(c) hardware-off, 3.0 V, +50 °C: ≤ 35 µA.** 3.0 V is below the UVLO's lowest threshold, 3.05 V. Estimate 21.3 µA high-side, plus the hot diode's 5 µA: 26.3 µA, leaving 8.7 µA.
   - **None of them is looser than revision 2's 100 / 150 µA** (mobric asked to be told of any):
     - (a) is unchanged;
-    - (b) leaves 7.8 µA of headroom on the 3.3 V rail, the same as 150 µA did at 3.0 V ((150 − 137.7) / 1.571), and 10.8 µA on the battery side, against 12.3 µA before. Keeping 150 µA at 3.4 V would have been 14 µA looser, and 138 µA up to 2 µA looser;
+    - (b) is now also no looser in power at the battery terminals: 132 µA × 3.4 V = 448.8 µW, against 150 µA × 3.0 V = 450 µW. Revision 3's 136 µA was 462.4 µW, 2.8 % more, which the review flagged (R4-N1). On the 3.3 V rail, with the 70 % conversion model, (b) leaves 4.9 µA of headroom ((132 − 125.2) / 1.387), less than the 7.8 µA that 150 µA left at 3.0 V ((150 − 137.7) / 1.571). Those rail figures depend on the model; the terminal-power comparison doesn't;
     - (c) is a new state, with a limit far below 150 µA.
 - **The protection board is upstream of the battery link**, so a meter in the link (R-P8) doesn't see its 3–6 µA.
 - **Traps.** F2, F5 and F6 must avoid each of these, because any one would dominate the floor:
@@ -281,8 +281,8 @@ Every event comes from one explicit timeline (R2-m1), implemented in [calc/winte
 
 **No listen windows (answer 23, R3-M3).** Revision 2 listened for gateway requests every 1–15 min. mobric says nobody uses them, so revision 3 checked what they are for:
 - **What triggers a request (Q23 a).** Only a person at the gateway: its BOOT button (GPIO0, `handleButton`, gateway.ino lines 1645–1658) or `r` / `R` typed on its serial console (lines 1763–1773). Both call `sendDataRequest` (lines 1572–1582), the only place that sets `requestPending`. Nothing sends a request at start-up, after a missed frame or after a timeout. The gateway sends no ACKs.
-- **What else the station's receiver does (Q23 b).** Nothing. The station receives only in `checkForRequest` and `listenForRequest` (station.ino lines 518–555), which accept nothing but `AA 55 01`. `doListenCheck` (lines 759–785) is never called. There is no configuration or OTA over the radio.
-- **So the listen windows go,** and with them the request service and revision 2's "every request heard". A button press now times out at the gateway after 120 s (gateway.ino lines 1779–1783), and nothing else changes there: it still decodes and uploads every valid frame.
+- **What else the station's receiver does (Q23 b).** Nothing. The station receives only in `checkForRequest` and `listenForRequest` (station.ino lines 518–555), which accept nothing but `AA 55 01`. `doListenCheck` (lines 759–785) is never called, but `setup()` calls `listenForRequest()` at line 807, so F5 removes that call too (R4-N2). There is no configuration or OTA over the radio.
+- **So the listen windows go,** and with them the request service and revision 2's "every request heard". A button press now goes unanswered. The gateway clears it after 120 s (gateway.ino lines 1779–1783), or earlier when the next scheduled frame arrives, because any valid frame clears the request (R4-N2). Nothing else changes there: it still decodes and uploads every valid frame (lines 1785–1817).
 - **The PRD plans a LoRa ACK for Phase 3** (`docs/prd-tech-design.md`, lines 546–552). It isn't part of this design, because it needs a gateway change. As a sensitivity the model adds a 2 s receive window after each report: 7.1 µAh each (M2, light sleep with the radio in RX).
 
 **Events.** Timing comes from station.ino at 82ee40d.
@@ -438,7 +438,7 @@ Outages over the 18 winters, model-derived, at azimuth 233°, now with **8 cells
 | M2 adaptive pessimistic, 2 s ACK | 2.1 Ah = 1 cell (1) | 2.6 Ah = 1 cell (1) | 4.1 Ah = 2 cells (2) |
 | M2 adaptive pessimistic, revision 2's listening (for comparison) | 2.6 Ah = 1 cell (1) | 3.4 Ah = 2 cells (2) | 5.5 Ah = 2 cells (3) |
 
-**Fallback limits (R3-m2).** The largest charge one full read with PM may cost (battery side) while still leaving no outage hour. Conditions: the energy corner, the estimate off by up to 15 %, the pessimistic floor, and the PMS7003's own 1.464 mAh per read; the rest of every read is scaled alike. For comparison, a pessimistic full read costs 1.78 mAh in M2 and 2.79 mAh in M1.
+**Fallback limits (R3-m2).** The largest charge one full read with PM may cost (battery side) while still leaving no outage hour. Conditions: the energy corner, the estimate off by up to 15 %, the pessimistic floor, and the PMS7003's own 1.464 mAh per read; the rest of every read is scaled alike. So the limits belong to this model, not to any split of a read's energy, and F6 measures each read mode's cost, not one full read alone (R4-N2, D13). For comparison, a pessimistic full read costs 1.78 mAh in M2 and 2.79 mAh in M1.
 
 | Pack | Adaptive (reads every 15 / 30 / 60 min) | Fixed 15 min |
 |---|---|---|
@@ -528,7 +528,7 @@ Costs are LCSC listed unit prices at quantity 1 for the exact part number given,
   - **VBUS limit (R2-M5).** The CH343P's VDD5 is rated 6 V absolute, so the board supports only USB sources within the USB voltage limits (D5). There is no overvoltage protection for the bridge.
   - The auto-reset follows Espressif DevKitC V4, with EN 10 kΩ / 1 µF per Espressif's checklist.
 - **Battery draw with USB unplugged:** zero for the CH343P itself. The translators draw at most 8 µA in total from 3V3 (datasheet supply and Ioff maxima), typically about 0.
-- **VBUS draw by host state (R3-M4).** With the charging jumper open, the board draws about 1.1 mA from VBUS in suspend (≤ 0.16 mA for the CH343P, ≤ 0.2 mA for its VBUS pull-down, 0.72 mA for the interlock), within the 2.5 mA a suspended device may take. Before configuration it stays far below 100 mA. F6 measures five states (R-F9): USB absent, attached but not configured, configured, suspended, and battery absent.
+- **VBUS draw by host state (R3-M4, R4-m1).** With the charging jumper open, the board draws about 1.73 mA from VBUS in suspend, within the 2.5 mA a suspended device may take: ≤ 0.16 mA for the CH343P, ≤ 0.2 mA for its VBUS pull-down, ≤ 0.6 mA for the BQ25170, whose input stays powered with ISET open (charge enabled at zero current, IQ_IN, [BQ]), 0.74 mA for the interlock, ≤ 25 µA for the interlock's LDO ([T7]) and ≤ 8 µA for the two translators. Revision 3's 1.1 mA left out the BQ25170 and the LDO. Before configuration it stays far below 100 mA. F6 measures five states (R-F9): USB absent, attached but not configured, configured, suspended, and battery absent.
 - **Reasons:** no crystal, rated −40 °C, and (b)'s CH340C is mostly rated only −20 °C. (c) draws nothing, but every flash or log session needs an adapter.
 - **Cost:** about $1.5 per board: CH343P $0.97 (C2846043), USB-C $0.19 (C165948), plus ESD parts and the two translators, which aren't priced yet. Under Standard PCBA add the loading fees for about 6 unique parts.
 - **Firmware impact:** none; upload works as on the DevKit.
@@ -558,7 +558,7 @@ Costs are LCSC listed unit prices at quantity 1 for the exact part number given,
   - Sources: the agent's checks of RadioLib, RadioHead and the Seeed fork, listed in [reviews/F1-response.md](reviews/F1-response.md).
 - **Exchange (changed for answer 23):**
   - The station sends its frame on its own schedule and no longer listens for requests (§ 6 item 1). Today it listens 8 s every minute.
-  - The gateway is unchanged. It sends `AA 55 01` every 2 s for up to 120 s only when someone presses its BOOT button or types `r` on its serial port (gateway.ino 1645–1658 and 1763–1773). Such a request now times out. The timeout only clears the request flag: the gateway still decodes and uploads every valid frame it hears (1779–1783), so the next scheduled report arrives as usual.
+  - The gateway is unchanged. It sends `AA 55 01` every 2 s for up to 120 s only when someone presses its BOOT button or types `r` on its serial port (gateway.ino 1645–1658 and 1763–1773). Such a request now goes unanswered: the gateway clears it after 120 s (1779–1783), or earlier when a scheduled frame arrives. Clearing it only resets the request flag: the gateway still decodes and uploads every valid frame it hears (1785–1817), so the next scheduled report arrives as usual.
   - There is no ACK in either direction yet. The PRD plans one (Phase 3). A 2 s receive window after each report would cost 7.1 µAh, and the model carries it as a sensitivity (§ 4.3).
 - **Link budget at 20 m:** free-space loss is 57.2 dB, sensitivity −123 dBm. Even with a high-loss outer wall, an inner wall and a 20 dB allowance, the margin is about 33 dB at 10 dBm (computed).
 - **Antenna (confirmed, Q11):**
@@ -573,14 +573,14 @@ Costs are LCSC listed unit prices at quantity 1 for the exact part number given,
 - **Cost:** +$6.45 on the board, but it removes the Grove module and the always-on 5 V rail. Pigtail, bulkhead and antenna aren't priced yet.
 - **Firmware impact:** see § 6 item 1. The packet and the gateway stay unchanged.
 
-### D5. Charging: LT3652, approved 25.10.2026 (revised for R3-M1, R3-M2, R3-M4 and R3-m3)
+### D5. Charging: LT3652, approved 25.10.2026 (revised for R3-M1, R3-M2, R3-M4, R3-m3, R4-M1, R4-M2 and R4-m1)
 - **Decision.** mobric approved the LT3652 on 25.10.2026, relayed by the coordinator. The CN3791 is the rejected alternative (note at the end of D5). The whole charging path is designed around the LT3652; F2 picks exact parts where this section says so.
 - **Why the LT3652** (unchanged from revision 1):
   - 40 V absolute maximum at VIN against a cold Voc of about 28 V;
   - a documented enable: SHDN, threshold 1.15–1.25 V (datasheet [LT2] p.3);
   - lower night drain: about 5.6 µA typical for the chip and its float divider (§ 4.1).
 
-**Panel input (R3-M2).** Panel → fuse → 5.0SMDJ28CA → TPS26600 → LT3652 VIN.
+**Panel input (R3-M2, R4-M2).** Panel → fuse → SM15T33CA → TPS26600 → LT3652 VIN.
 - **TPS26600** (TI 60 V eFuse with factory thresholds, datasheet [TP] §7):
   - reverse polarity down to −60 V, and reverse-current blocking. It replaces revision 1's 60 V Schottky, so there is no diode drop and no backflow path to the panel at night;
   - factory UVLO: on above 14.25–15.75 V, off below 13.25–14.75 V;
@@ -588,74 +588,96 @@ Costs are LCSC listed unit prices at quantity 1 for the exact part number given,
   - **MODE shorted to RTN:** active current limiting with auto-retry ([TP] Table 1). The limit is 0.94–1.06 A with R(ILIM) = 12 kΩ ± 1 % (0.95–1.05 A with an exact resistor);
   - absolute maximum 62 V at IN.
   - The cold Voc of about 28 V is below the lowest OVP trip (31 V) and the lowest release (28.5 V), so the OVP acts only on surges or a wrong supply. In normal use VIN stays inside the LT3652's 32 V operating range.
-  - Revision 2's surge bound leaned on the switch's fast-trip and OVP delays. Both are typical figures, not maxima (the review's R3-M2), so revision 3 doesn't use them.
-- **5.0SMDJ28CA** (Littelfuse, bidirectional, 5 kW at 10/1000 µs, SMC package, datasheet [SD]):
-  - stand-off 28 V at ≤ 5 µA;
-  - breakdown 31.1–34.4 V at 1 mA and 25 °C, with a **maximum** temperature coefficient of 0.094 %/°C;
-  - clamp ≤ 45.4 V at its rated 110 A.
-  - At −30 °C the breakdown is still ≥ 29.4 V, above the cold Voc of about 28 V, so the TVS doesn't conduct in normal use.
+  - Revision 2's surge bound leaned on the switch's fast-trip and OVP delays. Both are typical figures, not maxima (the review's R3-M2), so the bound doesn't use them.
+- **SM15T33CA** (ST Transil, bidirectional, 1500 W at 10/1000 µs, SMC package, datasheet [SM]). It replaces revision 3's 5.0SMDJ28CA (R4-M2):
+  - stand-off 28.2 V, above the cold Voc of 28.05 V, at ≤ 1 µA (25 °C);
+  - breakdown 31.4–34.7 V at 1 mA and 25 °C, with a temperature coefficient of at most 9.8 × 10⁻⁴/°C;
+  - clamp ≤ 45.7 V at its rated 33 A, and **at any lower current ≤ VBR max + RD × I, with RD = 0.333 Ω** at 10/1000 µs. ST publishes that formula for "the maximum clamping voltage at other surge levels" ([SM], note 3). It is the manufacturer-supported envelope the review asked for, in place of revision 3's straight line between two published points;
+  - ST shifts the clamp curve for another starting temperature by ΔVBR = αT × (T − 25 °C) × VBR(25 °C) ([SM]).
+  - At −30 °C the breakdown is still ≥ 31.4 × (1 − 9.8 × 10⁻⁴ × 55) = 29.7 V, above the cold Voc, so the TVS doesn't conduct in normal use. ST guarantees the stand-off leakage at 25 °C only. Whatever it leaks in the cold comes from the panel, not from the battery, so it costs no stored energy (R4-M2).
   - Bidirectional, so a reversed panel meets the TPS26600's reverse blocking rather than a forward-biased TVS.
-  - Rejected: revision 2's SMBJ33CA, whose 53.3 V clamp needed the switch's timing to protect VIN; and TI's TVS3300, which is unidirectional and rated only 4 A at 10/1000 µs.
-- **Surge bound.**
+  - Rejected: revision 3's 5.0SMDJ28CA (5 kW), whose datasheet gives only two points of its clamp curve, so it bounds the surge only at about 46.5 V (R4-M2); revision 2's SMBJ33CA; TI's TVS3300, which is unidirectional and rated only 4 A at 10/1000 µs.
+- **Surge bound (R4-M2).**
   - **The defined surge** (R-P1): a 10/1000 µs current pulse of up to 11.3 A peak, of either polarity, at most once a minute, with the board between −30 and +50 °C (assumed definition). The panel cable is under 1 m, on the station's own mast. A direct lightning strike is out of scope.
-  - **Clamp at 11.3 A.** The datasheet gives two points of the clamp curve: ≤ 34.4 V at 1 mA and ≤ 45.4 V at 110 A. The straight line between them gives 35.5 V at 11.3 A, assuming the real curve lies under that line, as a TVS curve does (assumed; F2 checks Littelfuse's curve). From a +50 °C start, with both points raised by the maximum coefficient (+2.35 %), it gives **≤ 36.4 V**.
-  - **Derating.** The pulse rating falls with the starting temperature, to about 83 % at +50 °C ([SD] Fig. 3), about 92 A. The defined 11.3 A is 12 % of that. Once a minute is a duty cycle of about 0.002 %, inside the datasheet's 0.01 %.
-  - **The TPS26600's IN and the LT3652's VIN both stay ≤ 36.4 V.** The switch can't raise its output above its input, so VIN ≤ IN. The bound comes from the TVS alone: it doesn't rely on the switch's response time, its current limit or the input capacitance. It is below the TPS26600's 62 V and the LT3652's 40 V absolute maxima. For the pulse's 1 ms or so, VIN may exceed the LT3652's 32 V operating range, which the absolute maximum allows.
+  - **Clamp at 11.3 A:** ≤ 34.7 V + 0.333 Ω × 11.3 A = 38.46 V from a 25 °C start. From +50 °C, VBR max rises by 9.8 × 10⁻⁴ × 25 × 34.7 V = 0.85 V: **≤ 39.31 V** (computed from [SM]).
+  - **Rating.** The defined 11.3 A is 34 % of the rated 33 A at 25 °C. F2 reads the derating for a +50 °C start from [SM]. Once a minute is a duty cycle of about 0.002 %.
+  - **Overshoot (assumed layout, F3).** The TVS sits at the TPS26600's IN pin. 10 nH of loop at the pulse's 1.13 A/µs adds ≤ 11 mV. If the switch opens while carrying up to 2 A, 10 nH into the ≥ 4.7 µF at VIN adds ≤ 2 A × √(10 nH / 4.7 µF) = 0.09 V.
+  - **The TPS26600's IN stays ≤ 39.3 V, and the LT3652's VIN ≤ 39.4 V.** VIN can't rise above the highest IN reached so far: the switch passes current only forward and blocks backflow. So VIN ≤ the maximum of IN over time, plus the overshoot. Revision 3's "VIN ≤ IN" doesn't hold while IN falls, because the VIN capacitors keep their charge (R4-M2).
+  - The bound comes from the TVS alone: it doesn't rely on the switch's response time, its current limit or the input capacitance. It is below the LT3652's 40 V absolute maximum and the TPS26600's 62 V. For the pulse's 1 ms or so, VIN may exceed the LT3652's 32 V operating range, which the absolute maximum allows.
+  - **The margin is 0.6 V,** and it rests on ST's formula. F2 confirms the SM15T33CA row and note 3 in ST's current datasheet. The copy archived for this revision is ST's 2007 revision 4: it has the same breakdown, clamp and αT figures, but no RD column. RD = (45.7 − 34.7) V / 33 A = 0.333 Ω reproduces its table point.
+  - **Negative pulse.** IN ≥ −39.3 V, inside the TPS26600's −60 V. The LDO's feed diode from IN then sees at most 39.3 V plus the LDO's input, so it is rated ≥ 100 V (interlock rail, below).
   - **A sustained overvoltage,** such as a wrong supply above the TVS breakdown, makes the TVS conduct and opens the fuse.
-  - **OVP tests on the bench** (§ 7) use a current-limited supply: the TVS may conduct from 31.1 V, inside the OVP's 31–34 V range.
+  - **OVP tests on the bench** (§ 7) use a current-limited supply: the TVS may conduct from 31.4 V, inside the OVP's 31–34 V range.
 - **Night drain.** The TPS26600's OUT leakage (≤ 11 µA at OUT 24 V, IN 0 V) can draw from the battery only through the LT3652's reverse path (§ 4.2).
 
-**Interlock (R2-B1, R3-M1).** Charging needs four conditions at once: the cells warm enough, not too hot, not overcharged, and a valid interlock rail. The first three each have their own **TLV3012BIDBVR** comparator (TI, push-pull output, datasheet [TL]). The fourth has a **TPS3840PL30** supervisor, U4 (datasheet [SV]).
+**Interlock (R2-B1, R3-M1, R4-M1).** Charging needs four conditions at once: the cells warm enough, not too hot, not overcharged, and a valid interlock rail. The first three each have their own **TLV3012BIDBVR** comparator (TI, push-pull output, datasheet [TL]). The fourth has a **TPS3840PL30** supervisor, U4 (datasheet [SV]).
 - **Why the B version:**
   - Its power-on reset holds the push-pull output low (sinking) while V+ is below the 1.65 V minimum supply, and for up to 1.9 ms after V+ crosses it ([TL] §9.4.5).
   - Its inputs are fail-safe up to 5.5 V, independent of V+ ([TL] §9.4.4).
   - Revision 1 named the plain TLV3012, which has no power-on reset; the guarantee belongs to the B version (the review's R2-B1). The open-drain TLV3011B goes high-Z during its reset and doesn't qualify.
   - The power-on reset is no longer what the proof rests on: U4 is (below). The review showed that the comparators' external networks needn't be settled when the reset releases (R3-M1).
 - **Interlock rail VREG.** A TPS7B6933: 4–40 V operating, 45 V for 200 ms, 3.3 V ± 3 %, 15 µA typical quiescent current (datasheet [T7]).
-  - Fed from the panel side of the TPS26600 (its IN node) through a diode and 1 kΩ. IN stays ≤ 36.4 V during the defined surge, inside the LDO's 40 V operating range, so revision 2's 36 V Zener is removed (R3-M2).
-  - Fed from VBUS through a ≥ 40 V diode.
-  - Load 0.72 mA at most (computed, § 4.1), all from the panel or VBUS. At night, with USB unplugged, VREG is 0 V and the interlock draws nothing from the battery.
-  - **Output capacitance ≥ 10 µF effective** (F2). When its source vanishes, VREG then falls at most 1 mA / 10 µF = 100 V/s, which bounds the filter error below.
+  - Fed from the panel side of the TPS26600 (its IN node) through a ≥ 100 V diode and 1 kΩ, **with a BZX84C33 Zener from the LDO's input to AGND, after the 1 kΩ (restored for R4-M2).** Revision 3 had removed it on the strength of the TVS's interpolated bound. The Zener's bound doesn't depend on the TVS at all:
+    - Diodes gives VZ ≤ 35.0 V at 2 mA and 25 °C, ZZT ≤ 80 Ω, and a coefficient of at most +27.4 mV/°C ([DZ]).
+    - During the defined surge (IN ≤ 39.3 V) it carries ≤ 9.6 mA and holds the LDO's input ≤ 35.0 + 0.69 (at +50 °C) + 7.6 mA × 80 Ω = 36.3 V.
+    - Even with IN at the TPS26600's own 62 V absolute maximum it carries ≤ 32 mA and holds ≤ 38.1 V, plus its self-heating over the 1 ms pulse, which F2 bounds from the part's pulse rating. Both stay inside the TPS7B6933's 40 V operating range.
+    - ZZT is specified at 2 mA. A Zener's dynamic resistance falls as its current rises, so using it above 2 mA is conservative (assumed).
+    - At −30 °C, VZ is still ≥ 31.0 − 55 × 0.0231 = 29.7 V at 2 mA, above the panel's cold Voc less the diode, so the Zener only leaks in normal use, and only from the panel.
+  - Fed from VBUS through a ≥ 40 V diode, which the Zener's ≤ 38.1 V keeps inside its reverse rating.
+  - Load 0.74 mA steady, ≤ 1.05 mA while every gate charges (computed, § 4.1), all from the panel or VBUS, plus the LDO's own ≤ 25 µA from its input. At night, with USB unplugged, VREG is 0 V and the interlock draws nothing from the battery.
+  - **Output capacitance ≥ 10 µF effective** (F2). VREG then rises at most 500 mA (the LDO's current limit, [T7]) / 10 µF = 50 V/ms. It falls at most 1.1 mA / 10 µF = 110 V/s, because the LDO doesn't sink current and its input diodes block backflow, so only VREG's own load can pull it down. These two slopes bound the filter error below.
   - **Regulated or not.** Whenever the solar charger can run, IN is above the TPS26600's 13.25 V UVLO, so VREG is regulated at 3.2–3.4 V. From USB alone, VBUS minus the diode can leave the LDO in dropout. The datasheet gives its dropout only at 100 mA (≤ 800 mV), so VREG may sit anywhere between U4's threshold and 3.2 V. The trips are therefore computed down to U4's threshold.
 - **Valid rail (U4, new for R3-M1).** A TPS3840PL30 watches VREG. Its output is push-pull and active low ([SV]).
-  - **Off:** its output goes low below 2.955–3.045 V (VIT−), within 30 µs (tP_HL, specified for a step to 10 % below VIT−).
+  - **Off:** its output goes low below 2.955–3.045 V (VIT−), within 30 µs (tP_HL, specified for a step to 10 % below VIT−, into 10 pF).
   - **On:** it goes high above VIT+ (≤ 3.17 V; hysteresis 75–125 mV), after a delay of 0.29–1.05 s set by CT = 1 µF (0.8–1.2 µF effective; [SV] equations 6 and 7, with its internal RCT of 350–650 kΩ). Regulated VREG (≥ 3.2 V) is above the highest VIT+, so U4 always releases once VREG regulates.
   - **At low rail voltage** its output is held low (≤ 0.2 V) down to VPOR, ≤ 0.3 V ([SV] §7.4.2). Below that, every gate is at most VREG, so at most 0.3 V.
   - **Slew.** Its VPOR and timing are specified for VDD slewing at ≤ 100 mV/µs. VREG can rise at most 500 mA (the LDO's current limit, [T7]) / 10 µF = 50 mV/µs, and falls far more slowly.
-  - It drives a fourth FET in each chain, Q9 in the solar chain and Q10 in the ISET chain (below). No charger can run unless VREG is valid, whatever the comparators do.
-  - **The delay isn't part of the proof.** After a short dip, CT may be only partly discharged and the delay comes out shorter ([SV] §7.3.2). The proof rests on the filters settling toward "do not charge" instead (below).
+  - It drives a fourth FET in each chain, Q9 in the solar chain and Q10 in the ISET chain, each at the bottom of its chain (below). No charger can run unless VREG is valid, whatever the comparators do.
+  - **The delay isn't part of the proof.** After a short dip, CT may be only partly discharged and the delay comes out shorter ([SV] §7.3.2). The proof rests on the filter error bound instead, which holds for any history of VREG (below).
+  - **Inhibit latency (R4-M1).** From VREG reaching 2.6595 V, 10 % below U4's lowest threshold, to Q9 and Q10 off:
+    - ≤ 30 µs for U4 (tP_HL; its 100 kΩ gate resistor leaves the output pin nearly unloaded);
+    - then ≤ 29.5 µs for the gate to fall through 100 kΩ ∥ 1 MΩ from at most 3.09 V to 0.3 V, where the FET leakage is specified. That takes U4's output at ≤ 0.2 V ([SV]) and a gate capacitance ≤ 100 pF, Miller charge included (F2).
+    - VREG falls at most 6.5 mV meanwhile. So the comparators decide down to **2.653 V, the falling floor**, and the trips are computed down to it.
+    - After that, Q9 and Q10 hold the stop, whatever the comparators do. Q3 then turns off within about 0.5 ms (≤ 1 nF, assumed), and each charger stops in its own response time, which F6 measures. That only delays a stop that is already decided, by about a millisecond, in which the cells' temperature and voltage can't move measurably.
 - **Temperature window (U1, U2).** A ratiometric divider: VREG – RS 12.0 kΩ – V_T – NTC – AGND.
   - The NTC is an MF52A 103F3950 (1 %) on the outermost cell; the resistors are 0.1 %.
   - U1 (cold): IN+ is a tap, RC1 10.0 kΩ from VREG and RC2 24.3 kΩ to AGND, with RHYS 3.32 MΩ from OUT1 **to the tap node**. IN− is V_T. OUT1 is high when the cells are warm enough.
   - U2 (hot): IN+ is V_T. IN− is a tap, RH1 10.0 kΩ from VREG and RH2 **4.02 kΩ** to AGND, with only the built-in hysteresis. OUT2 is high when the cells aren't too hot. RH2 was 3.92 kΩ in revision 2; the new value re-centres the hot trip, because the lower rail band (below) left only 0.02 K of margin at 45 °C.
   - **Ratiometric only in part (R3-M1).** Both comparators compare fractions of VREG, so the resistor ratios don't depend on VREG. The comparator's offset and hysteresis do, so the trips are computed for each band of VREG. The internal reference isn't used.
   - A low-leakage ESD diode sits at the NTC connector. All leakage at V_T (the ESD diode, the capacitors, the board) must stay ≤ 20 nA (F2). That much moves the cold trip by 0.006 K, which the safety corner includes.
-- **Input filters (changed for R3-M1).** Each comparator input that sees V_T has 10 kΩ in series and 1 nF C0G (± 5 %) to AGND, down from revision 2's 100 nF. U1's tap gets its own 20.0 kΩ and 1 nF, after the node where RHYS joins. U2's tap has no capacitor.
-  - **The filters are ordered so that a rising VREG reads "do not charge"** (computed, [calc/interlock_trips_output.txt](calc/interlock_trips_output.txt)):
-    - U1's tap (IN+) is slower than its V_T input (IN−) at any temperature, 25.5–28.6 µs against at most 23.2 µs. While VREG rises, IN+ lags further behind, so OUT1 leans to "too cold".
-    - U2's tap (IN−) is faster than its V_T input (IN+) at any temperature, at most 14 ns against at least 9.4 µs. V_T lags, so OUT2 leans to "too hot".
-    - This holds for any rise rate: a slow dawn, a fast USB plug-in, or a restart after a brown-out.
-  - **A falling VREG** leans the other way, so its error is bounded and counted. VREG falls at most 100 V/s (above), and the lag then shifts U1 by at most 0.81 mV (0.030 K) and U2 by 0.41 mV (0.019 K). The safety corner includes both.
+- **Input filters (changed for R4-M1).** One 680 pF C0G (± 5 %) on V_T itself. Each comparator input that sees V_T connects to it through 10 kΩ, with no capacitor of its own. U1's tap reaches IN+ through 27.0 kΩ with 330 pF C0G to AGND, after the node where RHYS joins. U2's tap has no capacitor.
+  - **Why the change.** Revision 3 put 1 nF behind each 10 kΩ. Both capacitors charge through the shared RS ∥ NTC, so its V_T inputs were slower than computed: at 0 °C their slowest time constant is 27.46 µs, against U1's tap's 27.07 µs, and the claimed ordering failed (the review's R4-M1, reproduced by the script).
+  - **The proof no longer rests on an ordering of time constants.** The script solves the whole input network as one coupled circuit of six nodes:
+    - V_T with its capacitor and up to 50 pF more of ESD diode, NTC cable and board;
+    - both 10 kΩ branches, U1's tap and its filter, and U2's tap;
+    - the comparators' own input capacitance: 1–10 pF to AGND at each input and 0–8 pF between a comparator's two inputs (2 and 4 pF typical, [TL]; the ranges are assumed).
+  - **An error bound for any history of VREG.** Each input follows the network's step response applied to VREG's slope. So the error between a comparator's two inputs, beyond their static difference, is the integral of the difference of their step responses times VREG's slope. That slope stays between −110 V/s and +50 V/ms (above). The worst unsafe error is therefore 50 V/ms × ∫ (the "charge" input leading)⁺ + 110 V/s × ∫ (it lagging)⁺. This covers slow and fast rises, short dips, restarts and any charge left on the capacitors, without relying on U4's delay.
+  - **Computed** at every tolerance corner (5 % capacitors, 1 % filter resistors, the parasitic ranges), at NTC values across each trip band ± 0.25 K, plus 300 random interior points ([calc/interlock_trips_output.txt](calc/interlock_trips_output.txt)):
+    - U1 ≤ 0.856 mV, 0.032 K at the falling floor; U2 ≤ 0.392 mV, 0.018 K. The safety corner includes both.
+    - Mean delays: U1's tap 10.6–12.3 µs against its V_T input's 5.3–7.0 µs; U2's tap ≤ 0.03 µs against its V_T input's 2.1–2.9 µs. So a rise mostly leans both comparators toward "do not charge".
+    - The small rise terms that remain come from the band's edges, where V_T's final value differs from the tap's, and from the comparators' differential capacitance, through which U1's slow tap lifts its V_T input slightly above its final value.
+    - Beyond each band, where the comparator already says "do not charge", the static distance from the trip exceeds the error by ≥ 59 mV at every NTC value out to open (U1) or nearly shorted (U2).
 - **Trips** from [calc/interlock_trips.py](calc/interlock_trips.py) (output in [calc/interlock_trips_output.txt](calc/interlock_trips_output.txt)). The tolerances are:
   - the NTC table's spread (R25 ± 1 %, B ± 1 %, datasheet) plus ± 0.5 % drift (assumed);
   - 0.1 % resistors at 25 ppm/K over 25 ± 30 °C (assumed part class), RHYS ± 1 %;
   - offset ± 9 mV and hysteresis 2–8 mV ([TL] §6.9);
-  - VREG in three bands: regulated (3.2–3.4 V); static down to U4's lowest threshold (2.955 V); and falling to 10 % below that threshold (2.66 V), the overdrive at which U4's 30 µs is specified. In those 30 µs VREG falls at most another 3 mV.
+  - VREG in three bands: regulated (3.2–3.4 V); static down to U4's lowest threshold (2.955 V); and down to the falling floor, 2.653 V. The floor is 10 % below that threshold, the overdrive at which U4's 30 µs is specified, less the 6.5 mV VREG can fall during the inhibit latency. Revision 3 described that last step but left it out of the sweep (R4-M1).
 
-| Trip | Nominal | Worst case, VREG regulated | Worst case, VREG down to U4's threshold | Safety corner, VREG falling to 2.66 V |
+| Trip | Nominal | Worst case, VREG regulated | Worst case, VREG down to U4's threshold | Safety corner, VREG at the falling floor, 2.653 V |
 |---|---|---|---|---|
-| Cold off (cooling) | +1.71 °C | +0.75 to +2.69 °C | +0.72 to +2.71 °C | +0.04 °C (must be ≥ 0 °C) |
+| Cold off (cooling) | +1.71 °C | +0.75 to +2.69 °C | +0.72 to +2.71 °C | +0.04 °C (+0.038; must be ≥ 0 °C) |
 | Cold on (warming) | +2.11 °C | +1.11 to +3.06 °C | +1.09 to +3.09 °C | +0.42 °C |
 | Hot off (heating) | +42.64 °C | +41.55 to +43.72 °C | +41.52 to +43.76 °C | +44.34 °C (must be ≤ 45 °C) |
 | Hot on (cooling) | +42.42 °C | +41.36 to +43.52 °C | +41.33 to +43.55 °C | +44.10 °C |
 
-  - **Safety corner** = the worst electrical corner with VREG falling to 2.66 V, plus the falling-rail error and three assumed allowances:
+  - The table's first three columns are unchanged from revision 3: the filters change no resistor ratio. Only the safety corner is recomputed.
+  - **Safety corner** = the worst electrical corner with VREG at the falling floor, plus the filter error and three assumed allowances:
     - on the cold side, the NTC's self-heating: computed 0.099 K at 82 µA, allowance 0.1 K;
     - on the cold side, 20 nA of leakage at V_T (0.006 K);
     - on both sides, a 0.5 K gradient between the NTC and the coldest or hottest cell. F6 measures this gradient (§ 7 item 13).
     - With VREG static at 2.955 V instead, the corners are +0.12 °C and +44.26 °C.
   - **The margins are small: 0.04 K cold and 0.66 K hot.** They hold only with the stated gradient, drift and leakage allowances (R-P4). If F2's parts or F6's gradient come out worse, the cold tap moves up, at the cost of charging hours.
-  - **Hysteresis:** 0.40 K cold (0.26–0.53 K) and 0.22 K hot (0.07–0.37 K).
+  - **Hysteresis:** 0.40 K cold (0.26–0.53 K) and 0.22 K hot (0.07–0.38 K; 0.37 K in revision 3, before the falling floor moved to 2.653 V).
   - **Why not revision 1's 2–3 K (R2-M1).** After every cold night, charging can start only above the "on" trip, so wide hysteresis costs charging hours. The review showed it would break revision 1's survival claim.
     - The hysteresis only has to stop chatter on a slow thermal signal that the input filters already smooth (assumed).
     - F6 checks for chatter on a slow temperature ramp.
@@ -664,7 +686,7 @@ Costs are LCSC listed unit prices at quantity 1 for the exact part number given,
   - IN−: the battery voltage through 768 kΩ / 301 kΩ (0.1 %), with 100 nF at IN−. It's taken on the battery side of the shunt, after the board fuse and the reverse protection.
     - The divider's low side is switched by Q8, whose gate comes from VREG, so the divider draws nothing at night.
     - While the interlock is powered, the divider draws about 4 µA from the battery.
-  - IN+: an LM4041-B (1.225 V ± 0.2 % at 25 °C, 100 ppm/°C maximum, datasheet [LM]), fed by **24.3 kΩ** from VREG (27 kΩ in revision 2). That gives 70 µA at VREG 2.955 V, U4's lowest threshold, above its 65 µA minimum operating current, and 91 µA at 3.4 V. So U3's reference is in regulation whenever U4 lets a chain close.
+  - IN+: an LM4041-B (1.225 V ± 0.2 % at 25 °C, 100 ppm/°C maximum, datasheet [LM]), fed by **20.0 kΩ** from VREG (24.3 kΩ in revision 3, 27 kΩ in revision 2). That gives 70.4 µA at the falling floor, 2.653 V, above its 65 µA minimum operating current, and 110 µA at 3.4 V. So U3's reference is in regulation whenever a chain can be closed (R4-M1: revision 3 checked it only down to 2.955 V).
   - **Trip** (computed): off above 4.36 V and on again below 4.34 V nominally. Worst case, off above 4.29–4.43 V; the hysteresis is 7–28 mV at the battery.
   - **It never interferes with normal charging.**
     - The LT3652's float is 4.17–4.23 V at 25 °C and 4.15–4.25 V over the chip's temperature range: at least 36 mV below U3's lowest trip.
@@ -674,11 +696,11 @@ Costs are LCSC listed unit prices at quantity 1 for the exact part number given,
   - **With a failed charger**, U3's small hysteresis switches that charger on and off around the trip.
     - That still holds the cells below 4.43 V, which is its only job.
     - The firmware reports any battery reading above 4.25 V as a charger fault (§ 6 item 12).
-  - **Against the 35E (answer 19, R3-N2).** Samsung's specification charges the 35E to 4.20 V and gives no overcharge threshold ([35E]). U3's 4.29–4.43 V is a backstop against a failed charger, not a limit approved by the cell maker. For comparison, the DW01A protection IC trips at 4.25–4.35 V (datasheet). F2 checks the trip against Samsung's formal specification (R-P4).
+  - **Against the 35E (answer 19, R3-N2, R4-N3).** Samsung's specification Ver 1.1 charges the 35E to 4.20 V and gives no overcharge threshold ([35E]). U3's 4.29–4.43 V is a backstop against a failed charger, not a limit approved by the cell maker, and nothing here qualifies it against one. For comparison, the DW01A protection IC trips at 4.25–4.35 V (datasheet). **F2 qualification:** ask Samsung or an authorised distributor for an abuse limit that covers U3's trip, including the float's tolerance. A passed abuse test is not approval for sustained or repeated charging at U3's trip (R-P4).
   - **Settling (R3-M1).** Revision 2's claim that U3's start-up errors read "overvoltage" is withdrawn: an under-biased reference doesn't force OUT3 low. U3 is now covered in two ways:
     - U4 keeps both chains open until VREG is valid. By then U3's reference is biased (above) and Q8's gate is at VREG.
     - At night Q8 is off, so IN− sits at the cell voltage, which reads "overvoltage". When the interlock powers up, IN− falls to its divided value with τ = 21.6 ms (100 nF on 216 kΩ). That is the safe direction.
-    - **The exception is connecting the battery while the interlock is powered.** Then IN− rises from 0 V with the same τ, so for about 0.1 s U3 can't see an overcharged battery. Only the chargers' own float limits the voltage then (R-P4).
+    - **The exception is connecting the battery while the interlock is powered.** Then IN− rises from 0 V with the same τ, and U3 can't see an overcharged battery until IN− passes its trip: after τ × ln(V_bat / (V_bat − V_trip)). That is about 0.1 s for a battery 0.1 V above the trip, and longer the closer it is, so it isn't a fixed deadline (R4-N3). The permissible transient is the chargers' own float, ≤ 4.25 V, which limits the voltage meanwhile (R-P4). F6 checks the connection order (§ 7 item 1).
 - **Combining the outputs: an AND of series FETs, never wired outputs.**
   - **Solar.**
     - Q1 (OUT1), Q2 (OUT2), Q6 (OUT3) and Q9 (U4) in series pull P-FET Q3's gate low through 100 kΩ.
@@ -689,16 +711,19 @@ Costs are LCSC listed unit prices at quantity 1 for the exact part number given,
     - Q4 (OUT1), Q5 (OUT2), Q7 (OUT3), Q10 (U4) and the charging jumper (R3-M4, below) sit in series with the BQ25170's 750 Ω ISET resistor.
     - With the chain open, ISET is open, and the BQ25170 gives no charge current ([BQ] §7.3.1.1). The charger keeps checking ISET while it runs, so closing the chain later starts charging normally.
     - The chain's resistance can only lower the current.
-  - **Gate drive.** Each gate is driven through 100 kΩ from its comparator or from U4, and held by 1 MΩ to ground, so an unpowered or high-Z driver means "off".
+  - **Gate drive.** Each gate is driven through 100 kΩ from its comparator or from U4, and held by 1 MΩ to ground, so an unpowered or high-Z driver means "off". Q9 and Q10, driven by U4, sit at the bottom of their chains, and the ISET chain is on the low side of R_ISET, so the chains' sources stay near AGND.
   - **Off means leakage, not just a threshold (R3-M1).** A FET below its threshold voltage still leaks, so the off state is bounded by leakage:
     - every chain FET leaks ≤ 1 µA at VGS ≤ 0.3 V, VDS 40 V and 55 °C (F2 requirement);
     - an open solar chain then holds Q3's VGS at ≤ 0.1 V (1 µA on 100 kΩ), where Q3 also leaks ≤ 1 µA. Into the ≤ 100 kΩ lower SHDN resistor that is ≤ 0.1 V, far below SHDN's 1.15 V threshold;
     - an open ISET chain leaks ≤ 1 µA. The BQ25170 publishes no ISET voltage, so F6 measures the charge current with the chain open, with a limit of 1 mA.
-  - **FET requirements for F2.**
-    - VGS(th) between 1.0 and 2.0 V: at least 1.0 V so that no gate turns on while VREG is below 1 V, and at most 2.0 V so that the drive at the lowest valid rail is enough.
-    - At the lowest valid rail, VREG 2.955 V × 1 MΩ / 1.1 MΩ gives about 2.69 V of gate drive, so on-resistance is specified at VGS 2.65 V. The four ISET-chain FETs need ≤ 5 Ω each, ≤ 20 Ω in all, which keeps USB charging ≥ 347 mA (R-P11). The solar chain only drives Q3's gate, so its FETs may have kΩ.
+  - **FET requirements for F2 (R4-M1: from guaranteed output levels, not from VREG).**
+    - **Drive.** The TPS3840 guarantees VOH ≥ 0.8 × VDD sourcing 2 mA ([SV]), the TLV3012B VOH ≥ V+ − 0.2 V sourcing 5 mA ([TL]). The 100 kΩ / 1 MΩ divider (1 %) passes ≥ 0.9074 of that. At the lowest regulated VREG, 3.2 V, a gate gets ≥ 2.32 V from U4 and ≥ 2.72 V from a comparator. At U4's threshold, 2.955 V, it gets ≥ 2.15 V and ≥ 2.50 V, taking U4's VOH to scale the same way: it is specified only above VIT+.
+    - **Source rise.** At most 110 mV under the top FET of a chain: the ISET chain carries ≤ 5.5 V / 750 Ω (ISET's absolute maximum, [BQ]) through three FETs of ≤ 5 Ω; the solar chain ≤ 32 V / 100 kΩ through three of ≤ 100 Ω. So every chain FET sees VGS ≥ 2.03 V when on.
+    - **R_DS(on) specified at VGS 1.8 V:** ≤ 5 Ω each in the ISET chain, ≤ 20 Ω in all, which keeps USB charging ≥ 347 mA (R-P11); ≤ 100 Ω each in the solar chain, which keeps its source rise as above.
+    - **No separate VGS(th) window.** Revision 3's 1.0 V minimum kept the gates off while VREG was below 1 V. U4 now holds Q9 and Q10 at ≤ 0.3 V until it releases, and "off" is defined by the leakage requirement.
+    - **Gate capacitance ≤ 100 pF,** Miller charge included: it sets the inhibit latency.
     - Leakage as above.
-    - "2N7002" is only a placeholder: its 2.5 V maximum threshold leaves too little drive at 2.65 V.
+    - "2N7002" is only a placeholder: its 2.5 V maximum threshold leaves no guaranteed drive at 2.03 V.
 - **Proof by state (R3-M1).** Charging needs U4's output and all three comparator outputs high. Solar charging also needs the TPS26600 on and VIN above about 10 V. Each row is one state the circuit can be in, and what holds each charger off.
 
 | State | Solar charger | USB charger | Basis |
@@ -706,10 +731,11 @@ Costs are LCSC listed unit prices at quantity 1 for the exact part number given,
 | No source: night, USB unplugged | VIN = 0 V | no input | design |
 | VREG below 0.3 V, rising or collapsing | Every gate is ≤ VREG ≤ 0.3 V, so the chain FETs leak ≤ 1 µA and Q3 and SHDN stay off | the ISET chain leaks ≤ 1 µA | F2 leakage requirement; F6 measures |
 | VREG from 0.3 V up to U4's release (≤ 3.17 V) | U4 holds Q9 off (output ≤ 0.2 V). Below 1.65 V the comparators' own reset also holds their outputs low | U4 holds Q10 off | datasheets [SV], [TL] |
-| U4's delay after release: 0.29–1.05 s from a full reset, shorter after a short dip | Q9 is on, and the comparators decide. Their inputs settle toward "do not charge" (filters above), and U3's IN− settles from above | same, through Q10 | design; computed |
+| U4's delay after release: 0.29–1.05 s from a full reset, shorter after a short dip | U4's output stays low until the delay ends, so Q9 stays off (revision 3 wrongly said "on", R4-M1). Meanwhile U3's IN− settles from above | U4 holds Q10 off | datasheet [SV]; design |
+| U4 released, VREG at or above U4's threshold, rising or steady | The comparators decide. Each one's inputs are within the filter error of their static values for any VREG history (above) | same, through Q10 | computed |
 | VREG valid and steady (2.955–3.4 V) | The trips hold as tabled | same | computed |
-| VREG falling: cloud, dusk, USB unplugged, brown-out | It falls at most 100 V/s. The trips hold down to 2.66 V with the lag error counted, and U4 opens Q9 within 30 µs of that | U4 opens Q10 | datasheet [SV]; computed |
-| Fast restart: VREG dips and comes back | U4 opens the chains on the way down, as above. On the way up the filters settle toward "do not charge"; nothing relies on U4's delay | same | design |
+| VREG falling: cloud, dusk, USB unplugged, brown-out | It falls at most 110 V/s. The trips hold down to the falling floor, 2.653 V, with the filter error counted, and Q9 is off by then (inhibit latency ≤ 59.5 µs) | U4 opens Q10 | datasheet [SV]; computed |
+| Fast restart: VREG dips and comes back | U4 opens the chains on the way down, as above. On the way up the filter error bound holds for any history, charge left on the capacitors included; nothing relies on U4's delay | same | computed |
 | Panel ramp at dawn | The TPS26600 keeps VIN at 0 V below 14.25 V minimum, and VREG is regulated well before that | — | datasheet [TP] |
 | Panel brown-out: cloud, dusk | The TPS26600 opens below 13.25–14.75 V, and SHDN falls below its threshold under about 10 V. If VREG falls too, U4 opens Q9 | — | datasheets [TP], [SV] |
 | USB only, VBUS low enough to leave the LDO in dropout | — | VREG between U4's threshold and 3.2 V: the trips hold (static column). Below the threshold U4 opens Q10 | computed; datasheet [SV] |
@@ -717,7 +743,7 @@ Costs are LCSC listed unit prices at quantity 1 for the exact part number given,
 | USB plugged in or out, VBUS ramp or brown-out | — | VREG follows VBUS through its diode: the rising and falling rows above | design |
 | Both sources | Gated by the same four outputs; VREG takes the higher source through the diodes | same | design |
 | Battery absent | The charger's output stays at or below its float (4.15–4.25 V), under U3's lowest trip | same (4.18–4.22 V) | datasheets [LT2], [BQ]; F6 tests it (R-F9) |
-| Battery connected while the interlock is powered | U3 is blind for about 0.1 s; the LT3652's float limits the voltage | the BQ25170's float limits the voltage | design |
+| Battery connected while the interlock is powered | U3 is blind until IN− passes its trip, about 0.1 s for 0.1 V of overdrive and longer for less; the LT3652's float limits the voltage | the BQ25170's float limits the voltage | design |
 | NTC open (cable broken, connector off) | V_T rises to VREG, which reads colder than −2 °C: OUT1 low | same | design |
 | NTC shorted | V_T falls to 0 V, which reads hotter than +47 °C: OUT2 low | same | design |
 | Cells above 4.29–4.43 V | OUT3 low | same | computed |
@@ -731,15 +757,17 @@ Costs are LCSC listed unit prices at quantity 1 for the exact part number given,
 
 **USB charging (R3-M4, R3-m3).**
 - **BQ25170, RISET 750 Ω (1 %).** I_CHG = K_ISET / R_ISET, with K_ISET 270–330 AΩ (datasheet [BQ]), gives 356–444 mA for the resistor alone, and **347–444 mA** with the ISET chain's ≤ 20 Ω (R-P11, R3-m3). F6's acceptance window is 347–444 mA.
-- **USB host states (R3-M4).** A USB 2.0 host allows 100 mA before configuration, up to 500 mA once configured, and 2.5 mA in suspend ([US]). A charger gated only by temperature and voltage would draw about 400 mA from the moment of attachment, and keep drawing it through suspend. The 5.1 kΩ on CC doesn't change that. The choice is mobric's (Q24):
-  - **(a) A charging jumper in the ISET chain, open by default (recommended).**
-    - Open, USB charging is off and the board draws only what the bridge and the interlock need. In suspend that is ≤ 0.16 mA for the CH343P, ≤ 0.2 mA for its VBUS pull-down and 0.72 mA for the interlock: about 1.1 mA, under the 2.5 mA allowed. So the board fits every host state (R-F9).
+- **USB host states (R3-M4).** A USB 2.0 host allows 100 mA before configuration, up to 500 mA once configured, and 2.5 mA in suspend ([US]). A charger gated only by temperature and voltage would draw about 400 mA from the moment of attachment, and keep drawing it through suspend. The 5.1 kΩ on CC doesn't change that. **mobric chose (a)** (Q24, relayed on 26.10.2026; a preference until the F1 gate):
+  - **(a) A charging jumper in the ISET chain, open by default (chosen).**
+    - Open, USB charging is off. A computer only programs the board and reads its logs. In suspend the board draws about 1.73 mA (R4-m1): ≤ 0.16 mA for the CH343P, ≤ 0.2 mA for its VBUS pull-down, ≤ 0.6 mA for the BQ25170, 0.74 mA for the interlock, ≤ 25 µA for the interlock's LDO and ≤ 8 µA for the translators. That is under the 2.5 mA allowed, so the board fits every host state (R-F9).
+    - Opening ISET stops charging but doesn't unpower the BQ25170: its IN pin stays on VBUS, charge enabled at zero current, with IQ_IN ≤ 0.6 mA ([BQ] §6.5, at its stated test condition). Its 80–110 µA TS-shutdown current doesn't apply. F6 measures the complete board.
     - Fitted, it is for USB chargers and power banks only, never for a computer port.
     - Cost: a 2-pin header and a shunt.
+  - Rejected alternatives, kept for the record:
   - **(b) Automatic: charge only from a USB-C source that advertises 1.5 A or 3 A on CC.** Two comparators would check the CC voltage on the 5.1 kΩ against about 0.66 V, about 8–10 more parts. USB-A chargers and A-to-C cables advertise only default power, so they would give data but no charging. F2 would check the Type-C rules for suspend.
   - **(c) No USB charging:** remove the BQ25170 and its chain. USB stays for programming and logs.
   - **The CH343P's ACT# output can't gate the charger.** Its datasheet says it signals a completed USB configuration, but not what it does in suspend.
-- **VBUS budget when charging: ≤ 461 mA.** That is ≤ 444 mA for the charger, ≤ 15 mA for the CH343P and ≤ 2 mA for the interlock (0.72 mA computed).
+- **VBUS budget when charging: ≤ 462 mA.** That is ≤ 444 mA for the charger plus ≤ 0.6 mA of its own bias (R4-m1), ≤ 15 mA for the CH343P and ≤ 2 mA for the interlock and its LDO (0.76 mA computed).
 - **Supported sources:** USB host ports with the jumper open; 5 V USB chargers and power banks with it fitted. Both must stay within the USB voltage limits: VBUS ≤ 5.5 V, because the CH343P's VDD5 is rated 6 V absolute (R2-M5). The board has ESD protection on VBUS, but no overvoltage protection for the CH343P.
 - **Charge voltage** 4.2 V (VSET, ± 0.5 % at 25 °C). **TS:** a fixed 10 kΩ to ground, because an open TS reads as cold (datasheet).
 
@@ -758,7 +786,7 @@ Costs are LCSC listed unit prices at quantity 1 for the exact part number given,
   - The firmware infers charging from the sign of the INA219's current (D9). GPIO39 becomes a spare input (§ 3).
 - **Input capacitance:** as the LT3652's datasheet recommends for VIN, rated for at least 40 V. It is no longer part of the surge bound (R3-M2), so revision 2's electrolytic isn't needed for that.
 
-**Cost.** Revision 1 priced the LT3652 (C671115, $8.55) and the BQ25170 (C5208201, $0.70). The other parts are not priced yet: TPS26600, 5.0SMDJ28CA, three TLV3012B, TPS7B6933, LM4041-B, two TPS3840 (PL30 for the rail, PL31 for the UVLO), ten small FETs and the charging jumper (F2). Estimate for D5: about $16–19 per board (assumed).
+**Cost.** Revision 1 priced the LT3652 (C671115, $8.55) and the BQ25170 (C5208201, $0.70). The other parts are not priced yet: TPS26600, SM15T33CA, BZX84C33, three TLV3012B, TPS7B6933, LM4041-B, two TPS3840 (PL30 for the rail, PL31 for the UVLO), ten small FETs and the charging jumper (F2). Estimate for D5: about $16–19 per board (assumed).
 
 **Risk:**
 - The LT3652 hasn't been proven at this site; the CN3791 module has.
@@ -783,12 +811,12 @@ mobric: "keep the BMS unknown and the on-board protection self-sufficient". The 
 |---|---|---|---|
 | Overcharge | Each charger's float: LT3652 4.15–4.25 V, BQ25170 4.18–4.22 V | U3 cuts both chargers above 4.29–4.43 V. The firmware flags a reading above 4.25 V (§ 6 item 12). Samsung gives no overcharge threshold for the 35E; F2 checks the trip against its formal specification | computed; datasheets [LT2], [BQ], [35E] |
 | Charging when too cold or too hot | Interlock window: off below +0.72 to +2.71 °C and above +41.52 to +43.76 °C, and only while U4 sees a valid rail. The 35E may charge from 0 to 45 °C | None (single comparator per side, see D5) | computed; datasheet [35E] |
-| Overdischarge | The firmware hibernates below 3 % (§ 6 item 11) | The TPS3840PL31 holds the 3.3 V converter off below 3.05–3.15 V, well above the 35E's 2.50 V cut-off. The cells then lose only 15.6–27.3 µA plus self-discharge | datasheets [SV], [35E]; § 4.2 |
+| Overdischarge | The firmware hibernates below 3 % (§ 6 item 11) | The TPS3840PL31 holds the 3.3 V converter off below 3.05–3.15 V, well above the 35E's 2.65 V cut-off. The cells then lose only 15.6–27.3 µA plus self-discharge | datasheets [SV], [35E]; § 4.2 |
 | Short circuit or overcurrent on the board | Board fuse in the battery input | The protection board, if it works (not relied on) | design |
 | Short in the battery cable | Inline fuse at the pack, about 5 A (assumed; F2 coordinates it) | — | design |
 | Reversed battery | Reverse-polarity protection in the battery input | — | design |
 
-- **Charge rate in the cold (R3-m3).** Charging may start at +0.72 °C (the worst-case off trip, with the rail at U4's threshold). Both chargers can run at once: at most 1.56 A + 0.444 A = 2.0 A. That is 0.67 A per cell (0.20 C) on today's 3 cells and 0.25 A per cell (0.075 C) on 8. The 35E allows 1.5 A per cell from 0 to 45 °C ([35E]), so even 3 cells stay below half of it.
+- **Charge rate in the cold (R3-m3).** Charging may start at +0.72 °C (the worst-case off trip, with the rail at U4's threshold). Both chargers can run at once: at most 1.56 A + 0.444 A = 2.0 A. That is 0.67 A per cell (0.20 C) on today's 3 cells and 0.25 A per cell (0.075 C) on 8. The 35E's specification Ver 1.1 allows up to 2.0 A per cell (1.7 A standard, 1.02 A for cycle life) from 0 to 45 °C ([35E]), so even 3 cells stay below half of the maximum.
 - **Revision 1 kept the external board as the cell protection.** The decision changes because its IC is unmarked (answer 20), so its thresholds can't be checked against the 4.2 V float.
 
 ### D6. 3.3 V rail
@@ -891,13 +919,17 @@ mobric: "keep the BMS unknown and the on-board protection self-sufficient". The 
 - **Cost:** about $0.3–0.5 (assumed).
 - **Firmware impact:** none until used.
 
-### D11. Size and enclosure
+### D11. Size and enclosure (revised in revision 4)
 mobric wants a new, better enclosure (Q8).
-- **Recommendation:** a parametric board outline (R-M2), and a 3D-printed enclosure designed in ClassCAD from the board STEP in F5.
+- **Recommendation:** a parametric board outline (R-M2), and a 3D-printed enclosure for the new PCB only (relayed by the coordinator on 26.10.2026; preferences until the F1 gate, replacing revision 3's ClassCAD plan):
+  - mobric models it in Fusion 360 with a 3D agent, Astra;
+  - the enclosure session `mobric/pcb-caseing` writes the specification, the board interface, the shopping list, the print settings and the STEP/STL review, in `hardware/station-pcb/enclosure/` only;
+  - printed in ASA and PETG-CF on an enclosed Bambu Lab printer.
+  - This document still owns the board's side of the interface: outline, holes, connectors, antenna keep-out and the battery compartment's size.
 - It needs:
   - an SMA bulkhead and cable glands for the panel, anemometer and Cat5e;
   - the ESP32 antenna at a wall, clear of cells, metal and cables;
-  - a battery compartment for the D13 pack, with about 10 mm of foam: about 100 × 62 × 88 mm for 8 cells, 155 × 62 × 88 mm for 14 (D13). The 35E is ≤ 18.50 mm across and ≤ 65.25 mm long with its tube, ≤ 50 g ([35E]);
+  - a battery compartment for the D13 pack, with about 10 mm of foam: about 100 × 62 × 88 mm for 8 cells, 155 × 62 × 88 mm for 14 (D13). The 35E is ≤ 18.55 mm across and ≤ 65.25 mm long, ≤ 50 g ([35E], Ver 1.1);
   - insulation that slows the pack's cooling: the cells may discharge only down to −10 °C, and the air at the site is colder than that for about 152 hours in an average winter (D13);
   - a route for the NTC lead to the outermost cell, and for the inline fuse at the pack.
 - **Cost:** none for the board.
@@ -908,13 +940,13 @@ mobric wants a new, better enclosure (Q8).
   - Quantity and budget are deferred until the design is done (Q9).
   - Keep unique part values few, because Standard charges $1.53 per unique part, basic included.
 - **First order of 5, estimate (computed, to be redone in F2):**
-  - Fixed cost about $127: setup $25.56, stencil $8.21, handling ≥ $14.93, about 51 unique parts × $1.53. Revision 2's input and interlock parts added about 8 unique parts. Revision 3 adds about 3 more: the TPS3840PL30, the 1 nF C0G, the 20.0 kΩ filter resistor and the jumper header, less the 36 V Zener (assumed count).
-  - Parts about $31–36 per board (assumed): revision 1's $25–28 plus the TPS26600, the 5.0SMDJ28CA, the three TLV3012B, the LM4041, the two TPS3840 and their small parts, none priced yet.
-  - **Total about $285–305 plus shipping and VAT** (assumed; F2 redoes it with prices).
+  - Fixed cost about $130: setup $25.56, stencil $8.21, handling ≥ $14.93, about 53 unique parts × $1.53. Revision 2's input and interlock parts added about 8 unique parts. Revision 3 adds about 3 more: the TPS3840PL30, the 1 nF C0G, the 20.0 kΩ filter resistor and the jumper header, less the 36 V Zener. Revision 4 adds about 2 more: the 1 nF becomes a 680 pF and a 330 pF C0G, a 27.0 kΩ joins, and the BZX84C33 returns; the TVS is swapped one for one (assumed count).
+  - Parts about $31–36 per board (assumed): revision 1's $25–28 plus the TPS26600, the SM15T33CA, the BZX84C33, the three TLV3012B, the LM4041, the two TPS3840 and their small parts, none priced yet.
+  - **Total about $290–310 plus shipping and VAT** (assumed; F2 redoes it with prices).
 - **Alternative:** Economic PCBA without the ESP32 module, which is then hand-soldered.
 - **Firmware impact:** none.
 
-### D13. Winter energy strategy (revised for R3-m2 and answers 16, 19 and 23)
+### D13. Winter energy strategy (revised for R3-m2, R4-N2, R4-N3 and answers 16, 19, 23 and 25)
 - **Options:**
   - (a) **Firmware:** M2 plus the adaptive schedule, reading every 15 min in normal mode, 30 min in lean and 60 min in survival, with no listening (§ 6 items 9–11). Revision 2's (a1) and (a2) differed only in how often the station listened for requests. Nobody uses the requests (answer 23), so both become (a).
   - (b) **Bigger pack** of Samsung INR18650-35E cells (answer 19), 3.35 Ah minimum each: **8 cells (1S8P, 26.8 Ah)**, mobric's choice, or **14 cells (1S14P, 46.9 Ah)**.
@@ -939,16 +971,17 @@ mobric wants a new, better enclosure (Q8).
   - **(d):** today's firmware on today's pack hibernates 16 times in the 18 winters, the longest outage 68 days (§ 4.5).
   - **(c)** was the strongest lever in revision 1's illustrative runs. It isn't modelled: with no logger this winter (answer 16), its parameters stay guesses.
   - **(e)** changes the charger, converter and pack, which is too much for v1. **(f)** barely helps (§ 4.5).
-- **The cells (answer 19, Q25).** Samsung INR18650-35E ([35E]):
-  - 3.60 V nominal; 3350 mAh minimum and 3450 mAh typical at 0.2C;
-  - charge at 4.20 V and up to 1.5 A; cut-off 2.50 V; discharge up to 8 A;
-  - charge 0 to 45 °C, discharge −10 to +60 °C, storage down to −20 °C;
-  - ≤ 50 g, Φ ≤ 18.50 mm and ≤ 65.25 mm long with its tube.
-  - **Recommended: 8 genuine 35E cells from one batch** (Q25 a). It is today's model, so every figure here applies, and its 0–45 °C charge range contains the interlock's window. Buy from an authorised distributor, because counterfeit 18650 cells are common (assumed).
+- **The cells (answer 19, Q25).** Samsung INR18650-35E, specification Ver 1.1 ([35E]; R4-m2 replaced the 2015 tentative report):
+  - 3.60 V nominal; 3350 mAh minimum at 0.2C to 2.65 V (1C = 3400 mA);
+  - charge CC-CV at 4.20 V: 1.7 A standard, 1.02 A for cycle life, 2.0 A maximum; cut-off 2.65 V; discharge 8 A continuous;
+  - charge 0 to 45 °C, discharge −10 to +60 °C (cell surface); storage −20 to 25 °C for a year, to 45 °C for 3 months, to 60 °C for a month;
+  - ≤ 50 g, Φ ≤ 18.55 mm and ≤ 65.25 mm long.
+  - **mobric chose 8 new, genuine 35E cells from one batch, bought from an authorised seller** (Q25 a, relayed on 26.10.2026; a preference until the F1 gate). It is today's model, so every figure here applies, and its 0–45 °C charge range contains the interlock's window. Counterfeit 18650 cells are common (assumed). F2 checks that the purchased batch matches Ver 1.1.
   - Don't mix them with today's three cells, whose age and state are unknown.
-  - The specification is a 2015 "tentative" edition. It gives no self-discharge figure and no overcharge threshold (§ 9). F2 checks U3's trip against Samsung's formal specification (D5, R-P4).
-  - Its mean discharge voltage is 3.62 V at 0.2C (12.62 Wh for 3482 mAh), so the model's 3.7 V overstates the energy by about 2 % (§ 9).
-- **The pack** (computed from the cell size, Φ 18.5 × 65.25 mm, about 68 mm with strips and insulation, assumed):
+  - The specification gives no self-discharge figure and no overcharge threshold (§ 9). U3's trip isn't qualified against a Samsung limit; that is an F2 item (D5, R-P4, R4-N3).
+  - The 2015 tentative report gave a mean discharge voltage of 3.62 V at 0.2C (12.62 Wh for 3482 mAh); Ver 1.1 gives no energy figure. So the model's 3.7 V overstates the energy by about 2 % (§ 9).
+  - The present per-cell currents stay well inside Ver 1.1: at most 0.67 A of charge per cell on 3 cells and 0.25 A on 8, and the UVLO at 3.05 V is far above the 2.65 V cut-off.
+- **The pack** (computed from the cell size, Φ 18.55 × 65.25 mm, about 68 mm with strips and insulation, assumed):
 
 | | 8 cells, 1S8P | 14 cells, 1S14P |
 |---|---|---|
@@ -972,8 +1005,9 @@ mobric wants a new, better enclosure (Q8).
   - The insulation keeps the gradients inside the pack small. F6 measures the outer-to-inner gradient on a cold sunny morning (§ 7 item 13). If it exceeds the 0.5 K allowed in the safety corner (D5), the cold trip moves up by the excess, which is one resistor change.
 - **Below the 35E's discharge range.** The 35E is specified for discharge down to −10 °C. The air at the site is colder than that for 152 hours in an average winter and up to 444 hours (2010/11), and colder than −20 °C, its lowest storage temperature, for 3.4 hours on average and up to 25 (§ 4.4). The station keeps drawing its sleep current then, and below −10 °C a read skips the PM sensor (D7).
   - Whether the cells themselves get that cold depends on the insulation and the pack's thermal mass, which the model can't see.
-  - The specification gives no limit for small currents below −10 °C. F2 looks for one in Samsung's formal specification.
+  - The specification gives no limit for small currents below −10 °C. F2 looks for one from Samsung or the distributor.
   - The compartment's foam (D11) is the first line, the heater footprint (below) the second.
+  - **Not yet shown (R4-N3):** foam and an unfitted heater don't establish the cells' temperature through a long cold spell. F2 defines how the −10 °C discharge limit is met, or else how the load is inhibited below it. The candidates are the board's DS18B20 on the pack with a firmware rule, the heater footprint, or a documented acceptance of the sleep current below −10 °C with Samsung's or the distributor's word on it. The energy model doesn't decide this.
 - **(c) and the heater footprint without a logger (answer 16).** No measurement will size (c) before the board is ordered.
   - The DNP footprint for a panel-powered heater (a connector and its switch, placed in F2) stays. It costs only board space, and the cold hours above are a reason to keep the option open.
   - Whether to fit a heater, and how big, waits for the pack temperature that the board itself logs in its first winter, from a DS18B20 on the 1-Wire header (§ 6 item 13).
@@ -981,6 +1015,7 @@ mobric wants a new, better enclosure (Q8).
 - **Conditions on the verdict (R3-m2).**
   - (a) rests on M2's assumptions: an 80 MHz CPU and the awake currents in § 4.3. F6 measures the charge of one full read with PM, and the sleep floor (R-P10).
   - **Named limits.** With 8 faded cells, the adaptive schedule leaves no outage hour as long as one full read with PM costs **≤ 3.99 mAh** at the battery. The pessimistic estimate is 1.78 mAh. With the sleep floor at R-P7's limit (b) instead of its estimate, the limit is 3.98 mAh (§ 4.5, [calc/winter_model_output.txt](calc/winter_model_output.txt)).
+  - **These limits belong to the model (R4-N2).** They hold with the PMS's contribution fixed, the rest of every read mode scaled alike, the stated durations and sleep accounting, and the stated Wi-Fi, floor and gate policy. At the limits the lowest charge comes within 0.05 percentage points of the 3 % hibernation trigger (Codex: 3.0435 % and 3.0074 %). One measured full read with PM can't on its own bound a no-PM survival read, repeated failures, longer events or extra wakeups, so F6 measures the cost of each mode.
   - **The fallback, if F6 measures more:** 14 cells allow up to 6.39 mAh when faded (7.80 mAh new; 6.38 mAh with the floor at its limit).
   - **Without the adaptive switching** the limits fall to 1.86 mAh for 8 faded cells and 2.79 mAh for 14 faded. M1's pessimistic full read, 2.79 mAh, therefore passes on 8 faded cells only with the adaptive schedule. On fixed 15-min reads it needs 12 cells new and 15 faded.
   - The hardware-off drain (R-P7 c) matters only after a UVLO cut-off, which no adaptive run reaches.
@@ -996,7 +1031,7 @@ mobric wants a new, better enclosure (Q8).
   - (b) €25–40 for 8 cells or €45–70 for 14 (assumed), plus strips or holders and the inline fuse;
   - (c) a heater pad, FET and foam, about €5 (assumed), plus enclosure work.
 - **Firmware impact:** § 6 items 9–12.
-- **For mobric (§ 8, Q25):** which cells to buy.
+- **Cells:** answered, Q25 (a) (§ 8).
 
 ### D14. Connectors (new; mobric left the choice to me, Q7)
 - **Options:**
@@ -1020,7 +1055,7 @@ mobric wants a new, better enclosure (Q8).
    - `Module(5, 35, 17)`, `SPI.begin(18, 19, 23, 5)`, then `begin(868.0, 125.0, 7, 5, 0x12, 10, 8, 0)`, `forceLDRO(false)`, `setCurrentLimit(100)`.
    - The DIO0 interrupt only sets a flag; the radio is read in the loop.
    - Transmit 28-byte frames: the header `FF FF 00 00` plus the 24-byte payload.
-   - **No request handling (answer 23).** The station no longer listens: drop `checkForRequest` and `listenForRequest` (station.ino 518–555) and the unused `doListenCheck` (759–785). The radio wakes only to transmit.
+   - **No request handling (answer 23).** The station no longer listens: drop `checkForRequest` and `listenForRequest` (station.ino 518–555), the unused `doListenCheck` (759–785), and the `listenForRequest()` call in `setup()` (line 807; R4-N2). The radio wakes only to transmit.
    - If the PRD's LoRa ACK comes later (Phase 3), a 2 s receive window after each report costs 7.1 µAh (§ 4.3).
    - `radio.sleep()` before every deep sleep. Leave GPIO17 (NRESET) high or high-Z: held low, the SX1276 draws up to 1 mA (datasheet § 5.2.2).
    - Add RadioLib to `sketch.yaml`.
@@ -1080,21 +1115,21 @@ mobric wants a new, better enclosure (Q8).
    - Check with cold spray, and for chatter on a slow temperature ramp.
    - Battery overvoltage: feed the battery input from a lab supply, 4.1 → 4.5 V. Both chargers must stop above U3's trip.
    - Ramp the panel input slowly, 0 → 30 V over minutes, and brown it out. Ramp VBUS only up to 5.5 V, because the CH343P's VDD5 is rated 6 V absolute (R2-M5). Revision 1's VBUS ramp to 20 V is withdrawn.
-   - **Rail (R3-M1).** With the NTC replaced by a resistor just inside the window, dip VREG through U4's threshold (2.955–3.045 V) and back, slowly and fast, and restart it within milliseconds of a dip. Hold it between U4's threshold and 3.2 V, as in USB dropout. Both chargers must stay off below U4's threshold, and the trips must hold above it.
-   - **Battery connection order.** Connect the battery while the interlock is powered, and with it unpowered. Then sweep the battery voltage through U3's trip with both sources present.
+   - **Rail (R3-M1, R4-M1).** With the NTC replaced by a resistor just inside the window, dip VREG through U4's threshold (2.955–3.045 V) and back, slowly and fast, and restart it within milliseconds of a dip. Hold it between U4's threshold and 3.2 V, as in USB dropout. Both chargers must stay off below U4's threshold, and the trips must hold above it. Measure the inhibit latency from VREG at 2.66 V to Q9's and Q10's gates at 0.3 V (≤ 59.5 µs computed), and each charger's stop time after that.
+   - **Battery connection order (R4-N3).** Connect the battery while the interlock is powered, and with it unpowered, with the battery at 4.30 V and 4.50 V. Record how long U3 takes to trip, and check that the cells meanwhile stay at or below the chargers' float, the permissible transient. Then sweep the battery voltage through U3's trip with both sources present.
    - With the ISET chain open, the BQ25170's charge current must be ≤ 1 mA (D5).
    - Log VREG, U4's output, OUT1–OUT3, SHDN and the ISET chain throughout. Both chargers must stay off outside the window, at every point of every ramp.
 2. **Panel input (R-P1):**
    - Measure Voc on a cold morning, and check that the TVS doesn't conduct at cold Voc.
-   - With a **current-limited** lab supply up to 34 V, check the TPS26600's UVLO and OVP thresholds. The TVS may conduct from 31.1 V, inside the OVP's range (D5). Test a reversed panel and measure night backflow.
-   - **The defined pulse (R3-M2):** 10/1000 µs at 11.3 A into the panel input, both polarities. IN and VIN must stay ≤ 36.4 V. This validates that one case; it doesn't replace the datasheet bound. Revision 2's test of the OVP's disable delay is dropped, because the bound no longer depends on it.
+   - With a **current-limited** lab supply up to 34 V, check the TPS26600's UVLO and OVP thresholds. The TVS may conduct from 31.4 V, inside the OVP's range (D5). Test a reversed panel and measure night backflow.
+   - **The defined pulse (R3-M2, R4-M2):** 10/1000 µs at 11.3 A into the panel input, both polarities, from a cold board and from +50 °C. IN must stay ≤ 39.3 V, VIN ≤ 39.4 V and the LDO's input ≤ 36.3 V. This validates the case and the layout's overshoot; it doesn't replace ST's bound. Revision 2's test of the OVP's disable delay is dropped, because the bound no longer depends on it.
 3. **Solar charger:**
    - VIN_REG holding about 18.7 V;
    - CC/CV and C/10 termination, with the INA219 shunt and a load present (D9);
    - CHRG and FAULT at their test points, probed with a pull-up to VIN.
 4. **USB:**
-   - **With the charging jumper open (R3-M4):** VBUS current in the five states of R-F9: USB absent, attached but not configured (≤ 100 mA), configured, suspended (≤ 2.5 mA; about 1.1 mA computed) and battery absent.
-   - **With it fitted,** from a USB charger or power bank: charge current within 347–444 mA (R-P11), and total VBUS current ≤ 461 mA.
+   - **With the charging jumper open (R3-M4):** VBUS current in the five states of R-F9: USB absent, attached but not configured (≤ 100 mA), configured, suspended (≤ 2.5 mA; about 1.73 mA computed, the BQ25170's IQ_IN and the LDO included, R4-m1) and battery absent.
+   - **With it fitted,** from a USB charger or power bank: charge current within 347–444 mA (R-P11), and total VBUS current ≤ 462 mA.
    - Panel and USB charging at the same time (R3-m3): up to 2.0 A into the cells, the shunt's temperature (R-P9), and termination under system load (R2-m3).
    - No back-feed into VBUS.
 5. **Radio:**
@@ -1103,16 +1138,16 @@ mobric wants a new, better enclosure (Q8).
    - 10 dBm output.
    - A soak of ≥ 5000 wake/transmit cycles logging `esp_reset_reason()`.
    - Sleep current after `radio.sleep()`.
-   - A button request on the gateway now times out (answer 23). Check that the next scheduled frame still arrives and is uploaded.
+   - A button request on the gateway now goes unanswered (answer 23): the gateway clears it after 120 s, or earlier when a scheduled frame arrives. Check that the next scheduled frame still arrives and is uploaded.
 6. **Sleep current (R-P7):**
    - µA meter at the battery link, in the three states of R-P7 (R3-m1; mobric agreed in principle, Q22):
      - (a) powered deep sleep at 3.7 V and 25 °C: ≤ 100 µA;
-     - (b) powered deep sleep at 3.4 V and +50 °C: ≤ 136 µA. 3.4 V is above the UVLO's highest release, so the converter runs;
+     - (b) powered deep sleep at 3.4 V and +50 °C: ≤ 132 µA (R4-N1). 3.4 V is above the UVLO's highest release, so the converter runs;
      - (c) hardware-off at 3.0 V and +50 °C: ≤ 35 µA. 3.0 V is below the UVLO's lowest threshold, so the converter is held off. No fixture override is needed in either state.
    - Plus 4.2 V for information.
    - The estimates are (a) 52.8 µA typical and 97.4 µA high-side, (b) 65.9 / 120.2 µA and (c) 12.6 / 21.3 µA, plus up to 5 µA from a hot catch diode in (b) and (c) (§ 4.2).
    - Check the catch Schottky warm and cold.
-7. **ESP32 awake current** under the real firmware. The main budget uncertainty is 45 vs 68 mA. Measure the charge of one full read with PM against D13's named limit: ≤ 3.99 mAh on 8 faded cells with the adaptive schedule, against a pessimistic estimate of 1.78 mAh (R3-m2, R-P10).
+7. **ESP32 awake current** under the real firmware. The main budget uncertainty is 45 vs 68 mA. Measure the charge of one full read with PM against D13's named limit: ≤ 3.99 mAh on 8 faded cells with the adaptive schedule, against a pessimistic estimate of 1.78 mAh (R3-m2, R-P10). The limit belongs to the model, so also measure each read mode and its duration, with and without PM, and rerun the model on the measured costs (R4-N2).
 8. **PMS7003:** back-feed into the unpowered sensor, and start-up after a cold power cycle.
 9. **Converters and UVLO:**
    - inrush, effective capacitance, output discharge and restart, pin parking and low-battery transients (review N3);
@@ -1128,7 +1163,7 @@ mobric wants a new, better enclosure (Q8).
 
 ## 8. Open questions and answers
 
-mobric's answers to questions 15, 16, 19, 22 and 23 and the pack size, relayed by the coordinator on 26.10.2026. They are preferences, not approvals, until the F1 gate:
+mobric's answers to questions 15, 16, 19 and 22–25 and the pack size, relayed by the coordinator on 26.10.2026. They are preferences, not approvals, until the F1 gate:
 
 | # | Question | Answer | Used in |
 |---|---|---|---|
@@ -1137,6 +1172,8 @@ mobric's answers to questions 15, 16, 19, 22 and 23 and the pack size, relayed b
 | 19 | Cell model | Samsung INR18650-35E: 3.35 Ah minimum per cell, so 10.05 Ah for today's 1S3P | § 4.1, D5, D5.2, D13, § 9 |
 | 22 | R-P7, the sleep-current target | Agreed in principle. Restate it for the states the board really has, and flag any limit looser than 100 / 150 µA. None is looser | R-P7; § 4.2; § 7 item 6 |
 | 23 | D13: (a1) or (a2) | Nobody uses the listening, so the request service goes. The station stops listening | D4, D13, § 4.3–4.5, § 6 |
+| 24 | USB charging from a computer (R3-M4) | (a) A charging jumper in the ISET chain, open by default. A computer only programs the board and reads its logs; with the jumper fitted, charge from a USB charger or power bank | D3, D5; R-F9; § 7 item 4 |
+| 25 | Cells for the 8-cell pack | (a) 8 new, genuine Samsung INR18650-35E from one batch, bought from an authorised seller | § 4.1, D13, § 9 |
 | — | D13: 8 or 14 cells | 8 cells, 1S8P. 8 faded cells pass every case at the pessimistic corner, so there was nothing to raise first | D13, § 4.5 |
 
 mobric's answers to questions 15–21, relayed by the coordinator on 25.10.2026:
@@ -1170,16 +1207,7 @@ Answers to questions 1–14 (revision 1):
 | 13 | Conformal coating? | Answered yes in Q21 | R-E4 |
 | 14 | USB-C or a 6-pin header? | USB-C on the board | D3 |
 
-Still open, for the coordinator to route to mobric:
-
-24. **USB charging from a computer (new, R3-M4).** A computer's USB port allows only 100 mA until it has set the board up, and 2.5 mA while it sleeps. The USB charger would take about 400 mA whenever the cells may charge, so it would break those rules. Which do you want?
-    - (a) **A charging jumper, open by default (recommended).** Without it, USB is for programming and logs only, and the board fits every computer port. Fit it only when the board hangs on a USB charger or power bank. It costs a 2-pin header.
-    - (b) **Automatic.** The board charges only from a USB-C charger that announces 1.5 A or more. That needs about 8–10 more parts. Chargers with a USB-A socket, and A-to-C cables, would then give no charging.
-    - (c) **No USB charging.** The USB charger goes; USB stays for programming and logs.
-25. **Which cells for the 8-cell pack (new, answer 19).**
-    - (a) **8 new, genuine Samsung INR18650-35E from one batch, bought from an authorised distributor (recommended).** It's today's model, so every figure in this document applies. Counterfeit 18650 cells are common.
-    - (b) Another 18650 model with a datasheet, at least 3.35 Ah minimum and charging allowed from 0 to 45 °C. F2 then rechecks the model, the interlock and U3 against that datasheet.
-    - (c) Today's three cells plus five new ones. Not recommended: the old cells' age and state are unknown, and they would sit in parallel with the new ones.
+No question is open after revision 4. The full texts of questions 24 and 25, with their options, are in revision 3 (8e02e77), § 8.
 
 ## 9. Not sourced (assumptions to replace with data)
 
@@ -1188,20 +1216,21 @@ Still open, for the coordinator to route to mobric:
 - SX1276 current on PA_BOOST at +10 dBm (40 mA assumed).
 - The protection board's IC, thresholds and quiescent current (3–6 µA assumed). Its IC is unmarked (answer 20), and nothing relies on it.
 - Buck-boost switching efficiency at sleep load (85 % at 3.7 V and 70 % at 3.0 V, assumed) and charger efficiency (85 % assumed).
-- **The cells.** Samsung's 35E specification ([35E], answer 19) now gives the capacity (3350 mAh minimum at 0.2C), the charge and discharge limits, the cut-off, the size and the mass. It is a 2015 "tentative" edition, and it doesn't give:
+- **The cells.** Samsung's 35E specification Ver 1.1 ([35E], answer 19, R4-m2) gives the capacity (3350 mAh minimum at 0.2C), the charge and discharge limits, the 2.65 V cut-off, the size and the mass. F2 checks that the purchased batch matches it. It doesn't give:
   - the capacity at −10 °C (85 % assumed) or the usable window (90 % assumed);
   - self-discharge (2 %/month assumed; only a 60 °C storage result is published);
-  - an overcharge threshold (F2 checks U3's trip against Samsung's formal specification);
+  - an overcharge threshold (U3's trip is an F2 qualification item, R4-N3);
   - the voltage-to-energy curve that maps the hibernation and UVLO voltages to stored energy (R3-N2). F5 sets those voltages from the cell's curve, and F6 checks them;
   - any limit for small discharge currents below −10 °C.
-- **Energy per Ah.** The model counts 3.7 V per Ah. The 35E's 0.2C discharge gives 3.62 V on average (12.62 Wh for 3482 mAh), so the model overstates the energy by about 2 %.
+- **Energy per Ah.** The model counts 3.7 V per Ah. The 2015 tentative report gave 3.62 V on average at 0.2C (12.62 Wh for 3482 mAh); Ver 1.1 gives 3.60 V nominal and no energy figure. So the model overstates the energy by about 2 %.
 - Cell temperature compared with air. The model uses air temperature, and the thermal options are illustrative. There is no logger this winter (answer 16); the board's DS18B20 gives the data in its first winter.
 - The interlock's allowances: a 0.5 K NTC-to-cell gradient, ± 0.5 % NTC drift, ≤ 20 nA of leakage at V_T, and a board temperature of 25 ± 30 °C while charging is possible. Also VREG's ≥ 10 µF effective (it sets the fall rate) and U4's CT of 0.8–1.2 µF effective.
-- The chain FETs' values: VGS(th) 1.0–2.0 V, R_DS(on) ≤ 5 Ω at VGS 2.65 V, and ≤ 1 µA of leakage at VGS ≤ 0.3 V, 40 V and 55 °C. F2 confirms them for the chosen FET. The BQ25170's current with ISET open isn't published; F6 measures it (≤ 1 mA).
+- The chain FETs' values: R_DS(on) at VGS 1.8 V (≤ 5 Ω in the ISET chain, ≤ 100 Ω in the solar chain), gate capacitance ≤ 100 pF, and ≤ 1 µA of leakage at VGS ≤ 0.3 V, 40 V and 55 °C. F2 confirms them for the chosen FET. U4's VOH between VIT− and VIT+, where TI specifies none; either TI confirms it at µA loads or the static-band drive stays an assumption.
+- The interlock filter's parasitics: ≤ 50 pF on V_T besides its capacitor, 1–10 pF at each comparator input and 0–8 pF between a comparator's inputs (TI gives 2 and 4 pF typical), 0.5–5 pF at U1's tap node. Also the inhibit latency's ≤ 100 pF gate and Q3's ≤ 1 nF. The BQ25170's current with ISET open isn't published; F6 measures it (≤ 1 mA).
 - The TPS7B6933's dropout at about 1 mA. Its datasheet gives it only at 100 mA, and it decides how far VREG sags on USB alone.
-- The surge definition (≤ 11.3 A at 10/1000 µs, either polarity, at most once a minute, −30 to +50 °C). Also the 5.0SMDJ28CA's clamp curve between its two published points, assumed to lie under the straight line; F2 checks Littelfuse's curve. The TPS26600's timing is no longer used.
+- The surge definition (≤ 11.3 A at 10/1000 µs, either polarity, at most once a minute, −30 to +50 °C). The bound uses ST's maximum-clamp formula, which F2 confirms in ST's current datasheet (the copy archived here is the 2007 revision). The layout's overshoot (10 nH, ≤ 2 A when the switch opens, ≥ 4.7 µF at VIN) and the Zener's self-heating in a pulse are assumed. The TPS26600's timing is no longer used.
 - The charge estimate's error (± 15 %) and the hibernation thresholds (3 % and 12 %). Gateway requests per day (2 nominal, 10 pessimistic) appear only in the comparison rows.
-- Cell size with strips (68 mm; the 35E itself is ≤ 65.25 mm long), holder size, cell price (€3–5), and how common counterfeit 18650 cells are.
+- Cell size with strips (68 mm; the 35E itself is ≤ 65.25 mm long and ≤ 18.55 mm across), holder size, cell price (€3–5), and how common counterfeit 18650 cells are.
 - PMS7003 active current (80 mA nominal), inrush and internal pull-ups.
 - Prices of passives, connectors, interlock and input parts, heater, pigtail, bulkhead and antenna; shipping and VAT.
 - FG-000WIND-004 datasheet. The contact rating is unknown, and 2.4 km/h per Hz comes from the firmware comment only.
@@ -1213,9 +1242,10 @@ Still open, for the coordinator to route to mobric:
 Closed item by item before the F2 and F3 gates (R-M6).
 
 **Ports.** For each port: connector series and pin order, mating part, current rating, ESD/TVS and any series filter.
-- Panel: pluggable terminal, fuse, 5.0SMDJ28CA, TPS26600 with its factory UVLO and OVP, R(ILIM) 12 kΩ ± 1 % and MODE shorted to RTN.
-  - Prove reverse polarity and the R-P1 bound, ≤ 36.4 V at both the TPS26600's IN and the LT3652's VIN, from Littelfuse's clamp curve.
-  - VIN capacitance as the LT3652's datasheet recommends, rated ≥ 40 V.
+- Panel: pluggable terminal, fuse, SM15T33CA at the TPS26600's IN pin, TPS26600 with its factory UVLO and OVP, R(ILIM) 12 kΩ ± 1 % and MODE shorted to RTN.
+  - Confirm ST's maximum-clamp formula and the SM15T33CA row in ST's current datasheet, and the derating for a +50 °C start. Prove reverse polarity and the R-P1 bound, ≤ 39.3 V at the TPS26600's IN and ≤ 39.4 V at the LT3652's VIN, with the layout's real loop inductance.
+  - VIN capacitance as the LT3652's datasheet recommends, ≥ 4.7 µF effective (it enters the overshoot allowance), rated ≥ 50 V.
+  - The interlock's LDO feed: a ≥ 100 V diode and 1 kΩ from IN, a BZX84C33 after the 1 kΩ, and its pulse rating for ≤ 32 mA over 1 ms (R4-M2).
 - Battery: locking JST rated above the fuse.
   - The board fuse is coordinated with the shunt's pulse rating, the inline fuse at the pack and the protection board's overcurrent trip.
   - Reverse protection.
@@ -1227,7 +1257,7 @@ Closed item by item before the F2 and F3 gates (R-M6).
   - CH343P isolation (D3): fixed DIR levels on the translators, no floating inputs, and the V3 rail's behaviour while unpowered;
   - the charging jumper in the ISET chain (Q24), open by default and marked for USB chargers and power banks only.
 - Anemometer, wind vane, BME680 (four wires), 1-Wire: pluggable terminals, ESD, series resistors and filters.
-- NTC: locking JST and low-leakage ESD (all leakage at V_T ≤ 20 nA). 10 kΩ and 1 nF C0G at each V_T input; 20.0 kΩ and 1 nF on U1's tap, after the node where RHYS joins; nothing on U2's tap (D5).
+- NTC: locking JST and low-leakage ESD (all leakage at V_T ≤ 20 nA). 680 pF C0G on V_T; 10 kΩ, and no capacitor, into each V_T input; 27.0 kΩ and 330 pF C0G on U1's tap, after the node where RHYS joins; nothing on U2's tap (D5, R4-M1). ESD diode, cable and board ≤ 50 pF on V_T.
 - PMS7003: adapter to its 1.27 mm connector, series resistors.
 - Antenna:
   - u.FL, π-match, RF ESD;
@@ -1251,12 +1281,14 @@ Closed item by item before the F2 and F3 gates (R-M6).
 
 **Calculations.**
 - Interlock with the chosen parts, rerunning [calc/interlock_trips.py](calc/interlock_trips.py):
-  - safety corners ≥ 0 °C and ≤ 45 °C, with VREG down to 2.66 V;
-  - the filter order: U1's tap slower and U2's tap faster than their V_T inputs;
+  - safety corners ≥ 0 °C and ≤ 45 °C, with VREG down to the falling floor (2.653 V);
+  - the coupled filter network with the chosen parts' capacitances, and the error bound for any VREG history;
+  - the inhibit latency with the chosen FETs' gate charge;
   - U3's lowest trip above the highest float, and U3 against Samsung's formal specification;
   - the proof by state (D5).
 - U4 (TPS3840PL30) with CT 1 µF, and VREG's output capacitance ≥ 10 µF effective.
-- FETs of the AND chains: VGS(th) 1.0–2.0 V; R_DS(on) ≤ 5 Ω at VGS 2.65 V in the ISET chain; leakage ≤ 1 µA at VGS ≤ 0.3 V, 40 V and 55 °C. The SHDN divider's lower resistor ≤ 100 kΩ.
+- FETs of the AND chains: R_DS(on) specified at VGS 1.8 V, ≤ 5 Ω in the ISET chain and ≤ 100 Ω in the solar chain; gate capacitance ≤ 100 pF; leakage ≤ 1 µA at VGS ≤ 0.3 V, 40 V and 55 °C. Q9 and Q10 at the bottom of their chains. The SHDN divider's lower resistor ≤ 100 kΩ.
+- LM4041 bias 20.0 kΩ (≥ 65 µA at the falling floor). Cell temperature below −10 °C: how the limit is met or the load inhibited (D13, R4-N3). U3 against an abuse limit from Samsung or the distributor (R4-N3).
 - Status pins: no pull-up from any rail that is powered while the LT3652's VIN isn't (R-F10).
 - Panel voltage bounds (R-P1).
 - MPPT, charge-current, float and C/10 tolerances (R-P2, R-P3).
@@ -1308,19 +1340,22 @@ Closed item by item before the F2 and F3 gates (R-M6).
 - [TP] TI TPS2660x 60 V eFuse, SLVSDG2G (December 2019): factory UVLO and OVP, current limit, fast trip, OUT leakage, §7.1 and §7.5: https://www.ti.com/lit/ds/symlink/tps2660.pdf
 - [SV] TI TPS3840 nano-power supervisor, SNVSB03E (revised May 2026): PL30 on the interlock rail, PL31 as the UVLO. Thresholds, RCT, VPOR and VOL §6.5; tP_HL and the slew condition §6.6; the delay, equations 6 and 7, and a partly discharged CT §7.3.2; low-VDD behaviour §7.4: https://www.ti.com/lit/ds/symlink/tps3840.pdf
 - [LM] TI LM4041-N, SNOS641I (July 2025): B grade ± 0.2 %, 100 ppm/°C, minimum operating current: https://www.ti.com/lit/ds/symlink/lm4041-n.pdf
-- [T7] TI TPS7B69xx: https://www.ti.com/lit/ds/symlink/tps7b69-q1.pdf
-- [SD] Littelfuse 5.0SMDJ series, 5000 W (5.0SMDJ28CA row: VR, VBR, VC at IPP, IR; maximum VBR temperature coefficient; Fig. 3 derating; 0.01 % duty), Farnell copy (© 2022): https://www.farnell.com/datasheets/3765771.pdf
+- [T7] TI TPS7B69xx (IOCL ≤ 500 mA, IQ ≤ 25 µA): https://www.ti.com/lit/ds/symlink/tps7b69-q1.pdf
+- [SM] ST SM15T Transil series, 1500 W: SM15T33A/CA row (VRM, IRM, VBR, VCL at IPP, RD, αT), note 3 "maximum clamping voltage at other surge level: VCL = RD × IPP + VBRmax" (current revision, read as quoted; F2 confirms), and ΔVBR = αT × (T − 25) × VBR for other temperatures. Current: https://www.st.com/resource/en/datasheet/sm15t.pdf. Archived here: revision 4, February 2007 (no RD column), https://pccomponents.com/datasheets/ST-SM15T.PDF
+- [DZ] Diodes Inc. BZX84C2V4–BZX84C51, DS18001 Rev 33-2: BZX84C33 VZ 31.0–35.0 V at 2 mA, ZZT ≤ 80 Ω, 23.1–27.4 mV/°C: https://www.diodes.com/assets/Datasheets/ds18001.pdf
+- [SD] Littelfuse 5.0SMDJ series, 5000 W, revision 3's TVS (5.0SMDJ28CA row: VR, VBR, VC at IPP, IR; maximum VBR temperature coefficient; Fig. 3 derating), Farnell copy (© 2022): https://www.farnell.com/datasheets/3765771.pdf
 - Shiheng MF52 NTC thermistor tables (MF52A 103F3950), LCSC copy
 - [US] USB-IF interoperability testing guidance with USB Type-C, §2.2: 100 mA unconfigured, up to 500 mA configured, 2.5 mA suspended. Cited by the review; not re-read here: https://www.usb.org/sites/default/files/3.2%20Interoperability%20Testing%20v0.99%20w%20USB%20Type-C.pdf
 - Rejected alternatives, kept for the record:
-  - [SM] Littelfuse SMBJ series (LCSC copy; SMBJ33A/CA row), revision 2's TVS: https://www.littelfuse.com/products/tvs-diodes/surface-mount/smbj.aspx
+  - [SMBJ] Littelfuse SMBJ series (LCSC copy; SMBJ33A/CA row), revision 2's TVS: https://www.littelfuse.com/products/tvs-diodes/surface-mount/smbj.aspx
   - TI TVS3300 (unidirectional; 4 A at 10/1000 µs): https://www.ti.com/lit/ds/symlink/tvs3300.pdf
   - [CN] Consonance CN3791 datasheet (Waveshare English copy): https://files.waveshare.com/wiki/Solar-Power-Manager-(D)/CN3791_Datasheet_EN.pdf, and the Chinese original: https://static.chipdip.ru/lib/174/DOC013174086.pdf
   - TI BQ24650: https://www.ti.com/lit/ds/symlink/bq24650.pdf
   - Microchip MCP6541/2: https://ww1.microchip.com/downloads/en/DeviceDoc/21696H.pdf
   - Infineon IRF7342: https://www.infineon.com/dgdl/irf7342pbf.pdf
   - CN3791 module teardowns: https://github.com/heypete/petes-guide-to-solar-battery-chargers/blob/main/improved-CN3791.md and https://techobsessed.net/2019/07/cn3791-mppt-solar-li-ion-charger-module-hinky-circuit/
-- [35E] Samsung SDI, "Technical Report of INR18650-35E", tentative specification, June 2015 (p.2 ratings, p.3 standard capacity and energy, p.7 storage at 60 °C), Rapid Electronics copy: https://static.rapidonline.com/pdf/10-5181_v1.pdf
+- [35E] Samsung SDI, "Specification of Product for Lithium-ion rechargeable cell, Model name: INR18650-35E", Ver 1.1 (9 July 2015): § 3 nominal specifications, § 7.10 storage at 60 °C. BTO copy: https://www.bto.pl/pdf/08097/INR18650-35E.pdf; fuller copy, Telit Power: https://docs.telitpower.com/pdf/li-ion/INR18650-35E.pdf
+- [35E-T] Samsung SDI, "Technical Report of INR18650-35E", tentative specification, June 2015, revision 3's source; used here only for the mean discharge voltage. Rapid Electronics copy: https://static.rapidonline.com/pdf/10-5181_v1.pdf
 - Panasonic NCR18650B: https://www.batteryspace.com/prod-specs/NCR18650B.pdf
 - LG INR18650 MJ1: https://cdn.shopify.com/s/files/1/0721/2761/1190/files/LG-MJ1.pdf
 - Fortune DW01A: https://atta.szlcsc.com/upload/public/pdf/source/20160616/1466072038371.pdf

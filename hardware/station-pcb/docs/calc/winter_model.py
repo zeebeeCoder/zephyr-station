@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hourly winter energy model for the Zephyr station PCB (F1 revision 3).
+"""Hourly winter energy model for the Zephyr station PCB (F1 revision 4).
 
 Input is a PVGIS v5.3 seriescalc JSON: hourly, pvcalculation=1, peakpower=1
 (kWp), loss=14. PVGIS's aspect is the azimuth from south (90 = west), so the
@@ -39,7 +39,7 @@ WIFI_MAH = 1.0          # daily allowance for an occasional Wi-Fi/OTA session (a
 K3 = 3.3 / (0.9 * 3.7)  # awake 3.3 V rail mAh -> battery mAh
 K5 = 5.0 / (0.9 * 3.7)  # 5 V rail mAh -> battery mAh
 CELL_AH = 3.35          # Samsung INR18650-35E, minimum capacity at 0.2C (owner answer 19; Samsung
-                        # technical report, June 2015): 10.05 Ah in today's 1S3P
+                        # specification Ver 1.1, July 2015): 10.05 Ah in today's 1S3P
 
 
 def load_series(path):
@@ -210,8 +210,9 @@ ACK_S = 2.0                  # receive window after each report for a LoRa ACK (
 # Drain on the cells, protection board included (ARCHITECTURE.md section 4.2), in uA.
 FLOOR_UA = (55.8, 138.7)     # deep sleep: typical at 3.7 V / high-side estimate at 3.0 V and 70 %
                              # (pessimistic: the converter runs down to 3.05 V at most)
-FLOOR_LIMIT_UA = 156.0       # sensitivity: a board at R-P7's limit (b), 136 uA at 3.4 V, is the same
-                             # 3.3 V-rail load as 150 uA at 3.0 V; plus 6 uA for the protection board
+FLOOR_LIMIT_UA = 151.4       # sensitivity: a board at R-P7's limit (b), 132 uA at 3.4 V, leaves 4.9 uA
+                             # on the 3.3 V rail; at 3.0 V and 70 % that is 145.4 uA at the link, plus
+                             # 6 uA for the protection board
 OFF_UA = (15.6, 27.3)        # the TPS3840 holds the 3.3 V converter off: typical / high-side
 HIB_CHECK_MAH = 0.25 * 25.0 * K3 / 3600   # hourly battery check while hibernating
 

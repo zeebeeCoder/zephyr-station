@@ -1,13 +1,13 @@
-Output of winter_model.py for F1 revision 3, run 26.10.2026 (model-derived, not measured).
+Output of winter_model.py for F1 revision 4, run 26.10.2026 (model-derived, not measured).
 
 Inputs: PVGIS v5.3 hourly series, lat 50.90, lon 15.73, 2005-2023, 1 kWp, loss 14 %, fetched with the
 query in the script's docstring. aspect=53 is the panel's compass azimuth of 233 deg (owner answer 15);
 aspect=0 is south, the revision-1 assumption. The files live in the gitignored build/f1-revision/pvgis/.
-Each run prints the SHA-256 of the files it read. winter_model.py SHA-256: 054c8a9ca0c7c9f6feb99f3a608c06a877125345498e2252c761013e8e9ebb9d
+Each run prints the SHA-256 of the files it read. winter_model.py SHA-256: 0235f8dc2495c511e9f5df3c74b9a797b033b314d26bf16e1c6f81ec37dd1cf2
 Interlock trips from calc/interlock_trips.py (calc/interlock_trips_output.txt).
 Sleep floors on the cells: 55.8 uA typical at 3.7 V, 138.7 uA high-side estimate at 3.0 V and 70 % conversion,
 pessimistic because the converter runs down to 3.05 V at most (ARCHITECTURE.md section 4.2). Cells: Samsung
-INR18650-35E at its 3.35 Ah minimum (owner answer 19).
+INR18650-35E at its 3.35 Ah minimum (owner answer 19; specification Ver 1.1).
 
 $ python3 -I docs/calc/winter_model.py codex build/f1-revision/pvgis/ser60/series.json
 Series: 60 deg tilt, aspect 0 (PVGIS-SARAH3/ERA5, 2005-2023), SHA-256 66b1548093a9b15f062adb9aed7e78c9c10262daec90899b09f742072edb8b19
@@ -152,7 +152,7 @@ in M1.
 | 14 cells, 46.90 Ah | 7.80 mAh | 3.33 mAh |
 | 14 cells, 37.52 Ah (20 % faded) | 6.39 mAh | 2.79 mAh |
 
-Sleep floor at R-P7's limit (b): 156.0 uA on the cells instead of 138.7 uA.
+Sleep floor at R-P7's limit (b): 151.4 uA on the cells instead of 138.7 uA.
 M2 adaptive pessimistic at the energy corner, charge estimate 15 % low / exact / 15 % high.
 | Pack | Outage days | Lowest charge | Largest full-read cost, adaptive |
 |---|---|---|---|
