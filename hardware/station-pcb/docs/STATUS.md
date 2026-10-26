@@ -1,6 +1,6 @@
 # Station PCB status
 
-Updated 26.10.2026. Maintained by the coordinator, `mobric/pcb-lead` (called `mobric/pcb-head` until 25.10.2026); created in F0 by `mobric/pcb-opus-5-5`.
+Updated 26.10.2026. Maintained by the coordinator, `mobric/workspace-claude` (a Codync bot) from 26.10.2026. Before that it was `mobric/pcb-lead` in Grok Bot, called `mobric/pcb-head` until 25.10.2026. Created in F0 by `mobric/pcb-opus-5-5`.
 
 ## Phase
 
@@ -64,9 +64,9 @@ Risks found in F1 and its reviews (surges at the charger input, the cold-charge 
 | Who | Role | Now |
 |---|---|---|
 | mobric | Owner. Approves decisions, orders and payment, firmware flashing, changes outside this folder | F1 questions 15, 16, 19, 22 and 23; approving D2–D4 and D6–D14; installing KiCad 9.0.x (R1) |
-| `mobric/pcb-lead` | Coordinator: briefs, gates, this file | F1 revision 2 |
-| `mobric/pcb-opus-5-5` (listed as `mobric/mikolaj-claude-60` since a restart) | Designer (Claude Code): atopile code, documents, KiCad, enclosure, firmware branch | F1 revision 2 done; waiting for the coordinator |
-| `mobric/mikolaj-codex` | Reviewer (Codex): checks against datasheets, writes `docs/reviews/F<n>-codex*.md`, doesn't edit designer files | F1 review (095b876) and re-review (959fe88) done; reviews revision 2 if the coordinator routes it |
+| `mobric/workspace-claude` (Codync, from 26.10.2026) | Coordinator: briefs, gates, this file. Took over from `mobric/pcb-lead` (Grok Bot) | Revision 2 routed to Codex; questions 15, 16, 19, 22 and 23 with mobric; then the revision 3 brief |
+| `mobric/pcb-opus-5-5` (listed as `mobric/mikolaj-claude-60` since a restart) | Designer (Claude Code): atopile code, documents, KiCad, enclosure, firmware branch | F1 revision 2 done; waiting for the Codex review and the revision 3 brief, with no changes to the F1 documents until then |
+| `mobric/mikolaj-codex` | Reviewer (Codex): checks against datasheets, writes `docs/reviews/F<n>-codex*.md`, doesn't edit designer files | F1 review (095b876) and re-review (959fe88) done; reviewing revision 2 (0d038c4) into `docs/reviews/F1-codex-r3.md` |
 
 The handoff session `mobric/projektowanie-custom-pcb-z-ai` delivered the project context on 25.10.2026 and does no further work.
 
