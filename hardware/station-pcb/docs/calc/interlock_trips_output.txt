@@ -1,0 +1,26 @@
+Output of interlock_trips.py for F1 revision 2, run 26.10.2026 (computed, not measured).
+interlock_trips.py SHA-256: 3e6af8c2d9ac64c41ae414eed5840a33a3d8f333d909d8f9fc4e32d1f2bd2e42
+
+$ python3 -I docs/calc/interlock_trips.py
+Resistors: RS 12.0 k, RC1 10.0 k, RC2 24.3 k, RHYS 3.32 M, RH1 10.0 k, RH2 3.92 k; tolerance +-0.175 % (RHYS +-1 %)
+NTC current at the cold trip: 82 uA, 0.198 mW -> self-heating 0.099 K in still air (allowance 0.1 K)
+
+| Trip | Nominal, deg C | Electrical worst case, deg C | Safety corner, deg C |
+|---|---|---|---|
+| Cold off (cooling) | +1.71 | +0.75 to +2.69 | +0.15 (must be >= 0) |
+| Cold on (warming) | +2.11 | +1.11 to +3.06 | +0.51 |
+| Hot off (heating) | +43.26 | +42.16 to +44.36 | +44.86 (must be <= 45) |
+| Hot on (cooling) | +43.04 | +41.97 to +44.16 | +44.66 |
+
+Cold hysteresis: nominal 0.40 K, range 0.26-0.48 K
+Hot hysteresis: nominal 0.22 K, range 0.07-0.31 K
+Energy corner for the winter model: off +2.69 C, on +3.06 C
+Safety corners include NTC self-heating 0.1 K (cold side only) and a 0.5 K NTC-to-cell gradient (both assumed).
+
+U3 battery overvoltage: LM4041-B 1.225 V (1.2189-1.2311 V), divider 768 k / 301 k
+  nominal: off above 4.361 V, on again below 4.340 V
+  worst case: off above 4.290 to 4.430 V, on again below 4.272 to 4.412 V; hysteresis 7-28 mV at the battery
+  LM4041 current at VREG 3.2 V: 72 uA (minimum operating 65 uA)
+  with the TLV3012B's own reference instead (divider 750 k / 301 k): off above 4.219 to 4.469 V (not used)
+LT3652 float: 4.174-4.226 V at 25 C, 4.146-4.254 V over the chip's temperature range; BQ25170: 4.179-4.221 V at 25 C
+Margin from the highest LT3652 float to the lowest U3 trip: 36 mV

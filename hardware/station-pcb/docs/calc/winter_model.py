@@ -1,23 +1,27 @@
 #!/usr/bin/env python3
-"""Hourly winter energy model for the Zephyr station PCB (F1 revision).
+"""Hourly winter energy model for the Zephyr station PCB (F1 revision 2).
 
 Input is a PVGIS v5.3 seriescalc JSON: hourly, pvcalculation=1, peakpower=1
-(kWp), loss=14. Download one per tilt (45, 60 or 70):
+(kWp), loss=14. PVGIS's aspect is the azimuth from south (90 = west), so the
+panel's compass azimuth of 233 deg is aspect=53. Download one per tilt:
 
-  https://re.jrc.ec.europa.eu/api/v5_3/seriescalc?lat=50.90&lon=15.73&startyear=2005&endyear=2023&angle=45&aspect=0&usehorizon=1&pvcalculation=1&peakpower=1&loss=14&pvtechchoice=crystSi&mountingplace=free&outputformat=json
+  https://re.jrc.ec.europa.eu/api/v5_3/seriescalc?lat=50.90&lon=15.73&startyear=2005&endyear=2023&angle=45&aspect=53&usehorizon=1&pvcalculation=1&peakpower=1&loss=14&pvtechchoice=crystSi&mountingplace=free&outputformat=json
 
 Usage (standard library only):
 
-  python3 -I winter_model.py codex SERIES_60.json
-      Reproduces the reviewer's daily-netting check (docs/reviews/F1-codex.md, M1).
-  python3 -I winter_model.py scenarios SERIES_45.json SERIES_70.json
-      Runs the chronological hourly battery model for the option table in
-      ARCHITECTURE.md section 4.
+  python3 -I winter_model.py codex SERIES_60_SOUTH.json
+      Reproduces the first review's daily-netting check (docs/reviews/F1-codex.md, M1).
+  python3 -I winter_model.py r2check SERIES_45_SOUTH.json
+      Reproduces the re-review's hysteresis sensitivity (docs/reviews/F1-codex-r2.md,
+      R2-M1) with the revision-1 loads and policy.
+  python3 -I winter_model.py scenarios SERIES_45_SW.json SERIES_70_SW.json SERIES_45_SOUTH.json
+      Runs the revision-2 model for ARCHITECTURE.md sections 4.3-4.5 and D13.
 
 Every input below is an assumption or a datasheet value documented in
 ARCHITECTURE.md section 4. The results are model outputs, not measurements.
 """
 
+import hashlib
 import json
 import math
 import sys
@@ -27,78 +31,44 @@ PV_LOSS = 0.86          # PVGIS 14 % system loss, removed; the charger efficienc
 ETA_CHG = 0.85          # charger and wiring efficiency (assumed)
 V_NOM = 3.7             # battery voltage for mAh <-> Wh (assumed)
 V_CHG = 3.8             # mean battery voltage while charging, for current clipping (assumed)
-I_CHG = 1.46            # charge current, about 1.5 A for either D5 charger; CN3791 nominal (computed)
+I_CHG = 1.46            # LT3652 charge current; a 68 mOhm sense resistor gives 1.47 A (D5)
 USABLE = 0.90 * 0.85    # usable window x cold derating (assumed)
 SELF_DIS = 0.02 / 730   # self-discharge per hour as a fraction of stored energy, 2 %/month (assumed)
-RESTART = 0.05          # after a brown-out the station restarts at 5 % of usable energy (assumed)
 PM_SKIP_C = -10.0       # PM readings skipped below this air temperature (owner answer Q12)
 WIFI_MAH = 1.0          # daily allowance for an occasional Wi-Fi/OTA session (assumed)
-RETRY_MARGIN = 1.05     # pessimistic profiles: failed reads and on-demand requests (assumed)
-FLOOR_TYP_UA = 55.5     # sleep floor incl. protection board, typical (ARCHITECTURE.md section 4.2)
-FLOOR_MAX_UA = 101.8    # sleep floor incl. protection board, bounded (ARCHITECTURE.md section 4.2)
-
-# Battery-side cost per event in mAh, from ARCHITECTURE.md section 4.3 (reconstructed
-# independently in F1-codex.md), plus the Ra-01H receive current (12.15 mA instead of
-# 10.3 mA): 8.1 s or 8 s x 1.85 mA x 3.3 / (0.9 x 3.7).
-RX_FIX_M1 = 8.1 * 1.85 * 3.3 / (0.9 * 3.7) / 3600
-RX_FIX_M2 = 8.0 * 1.85 * 3.3 / (0.9 * 3.7) / 3600
-EVENTS = {
-    "M1": dict(listen=0.13998 + RX_FIX_M1, listen_s=9.4, read=1.902, read_s=65.0, pms=1.054),
-    "M1p": dict(listen=0.19949 + RX_FIX_M1, listen_s=9.4, read=2.577, read_s=65.0, pms=1.318),
-    "M2": dict(listen=0.02664 + RX_FIX_M2, listen_s=8.3, read=1.507, read_s=63.8, pms=1.054),
-    "M2p": dict(listen=0.02714 + RX_FIX_M2, listen_s=8.3, read=1.876, read_s=63.8, pms=1.318),
-}
-
-# Cadences: (full reads per day, listen wakes per day, PM on full reads).
-CADENCE = {
-    "15min": (96, 1344, True),       # listen every minute, full read every 15 min
-    "now": (74.1, 1111.5, True),     # today's 19.4-min firmware cycle
-    "lean": (48, 288, True),         # full read every 30 min, listen every 5 min
-    "survival": (24, 96, False),     # hourly read without PM, listen every 15 min
-}
-
-
-def daily_mah(events, cadence, floor_ua, margin=1.0):
-    """Battery-side mAh per day for one event set and cadence, and PM mAh per read."""
-    ev = EVENTS[events]
-    reads, listens, pm = CADENCE[cadence]
-    read = ev["read"] if pm else ev["read"] - ev["pms"]
-    awake_h = (listens * ev["listen_s"] + reads * ev["read_s"]) / 3600
-    mah = listens * ev["listen"] + reads * read + floor_ua / 1000 * (24 - awake_h) + WIFI_MAH
-    return mah * margin, (reads * ev["pms"] if pm else 0.0)
-
-
-# Load profiles: list of (mode name, events, cadence, floor, margin). One mode means a
-# fixed schedule; several modes form the adaptive policy, ordered from normal to lean.
-PROFILES = {
-    "M1 now (19.4-min cycle)": [("normal", "M1", "now", FLOOR_TYP_UA, 1.0)],
-    "M1 nominal": [("normal", "M1", "15min", FLOOR_TYP_UA, 1.0)],
-    "M1 pessimistic": [("normal", "M1p", "15min", FLOOR_MAX_UA, RETRY_MARGIN)],
-    "M2 nominal": [("normal", "M2", "15min", FLOOR_TYP_UA, 1.0)],
-    "M2 pessimistic": [("normal", "M2p", "15min", FLOOR_MAX_UA, RETRY_MARGIN)],
-    "M2 adaptive": [
-        ("normal", "M2", "15min", FLOOR_TYP_UA, 1.0),
-        ("lean", "M2", "lean", FLOOR_TYP_UA, 1.0),
-        ("survival", "M2", "survival", FLOOR_TYP_UA, 1.0),
-    ],
-}
-# Adaptive thresholds on state of charge: (enter below, leave above) for lean and survival.
-LEAN_AT, LEAN_OFF = 0.40, 0.50
-SURV_AT, SURV_OFF = 0.15, 0.20
+K3 = 3.3 / (0.9 * 3.7)  # awake 3.3 V rail mAh -> battery mAh
+K5 = 5.0 / (0.9 * 3.7)  # 5 V rail mAh -> battery mAh
+CELL_AH = 3.4           # one cell of the owner's pack: 10.2 Ah in 1S3P (owner answer)
 
 
 def load_series(path):
-    data = json.load(open(path))
-    rows = [(r["time"][:8], r["P"], r["G(i)"], r["T2m"]) for r in data["outputs"]["hourly"]]
+    data = json.load(open(path, "rb"))
+    rows = []
+    for r in data["outputs"]["hourly"]:
+        day = r["time"][:8]
+        y, m = int(day[:4]), int(day[4:6])
+        rows.append((day, r["P"], r["G(i)"], r["T2m"], y if m >= 7 else y - 1))
     return data["inputs"], rows
 
 
-# ---------------------------------------------------------------- reviewer check
+def sha256(path):
+    return hashlib.sha256(open(path, "rb").read()).hexdigest()
+
+
+def describe(path, inputs):
+    fixed = inputs["mounting_system"]["fixed"]
+    meteo = inputs["meteo_data"]
+    return (f"{fixed['slope']['value']} deg tilt, aspect {fixed['azimuth']['value']} "
+            f"({meteo['radiation_db']}/{meteo['meteo_db']}, {meteo['year_min']}-{meteo['year_max']}), "
+            f"SHA-256 {sha256(path)}")
+
+
+# ---------------------------------------------------------------- reviewer check (M1)
 
 def daily_harvest(rows, wp=10.0, t_low=0.0, t_high=45.0):
     """Battery-side Wh per UTC day, charging only while t_low <= T2m <= t_high."""
     days, order = {}, []
-    for day, p, _g, t in rows:
+    for day, p, _g, t, _s in rows:
         if day not in days:
             days[day] = 0.0
             order.append(day)
@@ -141,9 +111,7 @@ def max_deficit(daily, load_wh):
 
 def cmd_codex(path):
     inputs, rows = load_series(path)
-    print(f"Series: {inputs['mounting_system']['fixed']['slope']['value']} deg, "
-          f"{inputs['meteo_data']['radiation_db']}/{inputs['meteo_data']['meteo_db']}, "
-          f"{inputs['meteo_data']['year_min']}-{inputs['meteo_data']['year_max']}")
+    print(f"Series: {describe(path, inputs)}")
     daily = daily_harvest(rows)
     dec = [h for d, h in daily if d[4:6] == "12"]
     print(f"December mean, gated 0-45 C: {sum(dec) / len(dec):.3f} Wh/day")
@@ -159,239 +127,536 @@ def cmd_codex(path):
         print(f"Max cumulative deficit {name} ({mah * V_NOM / 1000:.3f} Wh/day): {d:.2f} Wh, {a}-{b}")
 
 
-# ---------------------------------------------------------------- hourly model
+# ---------------------------------------------------------------- revision-1 loads (r2check)
 
-def season_of(day):
-    """Winter season label: Jul-Jun, named by the autumn year."""
-    y, m = int(day[:4]), int(day[4:6])
-    return y if m >= 7 else y - 1
+# Battery-side cost per event in mAh and the cadences exactly as in revision 1 (a22e006).
+R1_EVENTS = {
+    "M2": dict(listen=0.02664 + 8.0 * 1.85 * K3 / 3600, listen_s=8.3, read=1.507, read_s=63.8,
+               pms=1.054),
+}
+R1_CADENCE = {"15min": (96, 1344, True), "lean": (48, 288, True), "survival": (24, 96, False)}
+R1_FLOOR_UA = 55.5
 
 
-def simulate(rows, profile, wp=10.0, ah=10.2, t_low=0.0, t_high=45.0,
-             sun_k=0.0, heater=None):
+def r1_modes():
+    """Revision-1 M2 adaptive: hourly Wh and PMS Wh per mode, sleep floor in Wh/h."""
+    ev = R1_EVENTS["M2"]
+    modes = []
+    for cad in ("15min", "lean", "survival"):
+        reads, listens, pm = R1_CADENCE[cad]
+        read = ev["read"] if pm else ev["read"] - ev["pms"]
+        awake_h = (listens * ev["listen_s"] + reads * ev["read_s"]) / 3600
+        mah = listens * ev["listen"] + reads * read + R1_FLOOR_UA / 1000 * (24 - awake_h) + WIFI_MAH
+        modes.append((mah / 24 * V_NOM / 1000, (reads * ev["pms"] if pm else 0.0) / 24 * V_NOM / 1000))
+    floor_wh = R1_FLOOR_UA / 1e6 * V_NOM
+    return modes, floor_wh
+
+
+# ---------------------------------------------------------------- revision-2 loads
+
+# Currents on their own rail in mA, nominal / pessimistic (ARCHITECTURE.md section 4.1).
+CPU_MA = {"M1": (45.0, 68.0), "M2": (25.0, 31.0)}   # M1 at 240 MHz, M2 at 80 MHz
+RADIO_STBY_MA, RADIO_RX_MA, LIGHT_SLEEP_MA, INA_MA = 1.6, 12.15, 0.8, 0.7
+TX_MA_S = 40.0 * 0.0668      # one 28-byte frame at +10 dBm
+HEATER_MA_S = 12.0 * 0.15    # BME680 gas heater
+PMS_MA = (80.0, 100.0)       # PMS7003 at 5 V
+# Timeline in seconds (station.ino at 82ee40d; ARCHITECTURE.md section 4.3).
+PMS_S = (31.6, 35.1)         # 0.1 s + 30 s warm-up + reads; retries allow up to 35.1 s
+WIND_S = 31.0                # measureWindSpeed()
+OTHER_S = {"M1": 2.417, "M2": 1.2}               # boot, BME680, INA219 and TX
+LISTEN_S = {"M1": (1.3, 8.1), "M2": (0.3, 8.0)}  # set-up while awake, then the receive window
+
+
+def listen_event(fw, p):
+    """One listen wake: battery mAh and seconds awake."""
+    setup, rx = LISTEN_S[fw]
+    cpu = CPU_MA[fw][p]
+    idle = cpu if fw == "M1" else LIGHT_SLEEP_MA     # M2 light-sleeps while the radio listens
+    ma_s = setup * (cpu + RADIO_STBY_MA) + rx * (idle + RADIO_RX_MA)
+    return ma_s * K3 / 3600, setup + rx
+
+
+def read_event(fw, p, pm=True):
+    """One full read: battery mAh, seconds awake, and the PMS7003's share in mAh."""
+    pms_s = PMS_S[p] if pm else 0.0
+    if fw == "M1":      # as today: PMS, then the wind count, radio in standby
+        secs = OTHER_S[fw] + pms_s + WIND_S
+        rail = CPU_MA[fw][p] + RADIO_STBY_MA + INA_MA
+    else:               # M2: radio asleep until TX, wind counted during the PMS warm-up
+        secs = OTHER_S[fw] + max(pms_s, WIND_S)
+        rail = CPU_MA[fw][p] + INA_MA
+    pms = pms_s * PMS_MA[p] * K5 / 3600
+    return (secs * rail + HEATER_MA_S + TX_MA_S) * K3 / 3600 + pms, secs, pms
+
+
+# Schedules on an absolute minute grid: (full-read period, listen period) in seconds, PM on
+# full reads, Wi-Fi/OTA allowance. A full read takes the listen slot it starts in and every
+# slot that starts before it ends.
+SCHEDULES = {
+    "normal": (900, 60, True, True),
+    "lean": (1800, 300, True, True),
+    "survival": (3600, 900, False, False),
+    "lean, 2-min listen": (1800, 120, True, True),         # keeps every gateway request heard
+    "survival, 2-min listen": (3600, 120, False, False),
+}
+GATEWAY_WINDOW_S = 120       # the unchanged gateway repeats a request for 120 s (gateway.ino)
+REQUESTS = (2.0, 10.0)       # button requests per day, nominal / pessimistic (assumed)
+
+# Drain on the cells, protection board included (ARCHITECTURE.md section 4.2), in uA.
+FLOOR_UA = (55.8, 138.7)     # deep sleep: typical at 3.7 V / high-side estimate at 3.0 V and 70 %
+OFF_UA = (15.6, 27.3)        # the TPS3840 holds the 3.3 V converter off: typical / high-side
+HIB_CHECK_MAH = 0.25 * 25.0 * K3 / 3600   # hourly battery check while hibernating
+
+
+def day_load(fw, p, sched):
+    """Battery mAh per day, PMS mAh per day and the event counts for one schedule."""
+    read_p, listen_p, pm, wifi = SCHEDULES[sched]
+    l_mah, l_s = listen_event(fw, p)
+    r_mah, r_s, pms = read_event(fw, p, pm)
+    reads = 86400 / read_p
+    listens = 86400 / listen_p - reads * math.ceil(r_s / listen_p)
+    # A request is heard only if a listen falls inside the gateway's window. Serving it costs
+    # one extra full read, which starts after that listen and may cover the next slot.
+    served = REQUESTS[p] * min(1.0, GATEWAY_WINDOW_S / listen_p)
+    listens -= served * math.floor((LISTEN_S[fw][1] + r_s) / listen_p)
+    awake_h = (listens * l_s + (reads + served) * r_s) / 3600
+    mah = (listens * l_mah + (reads + served) * r_mah + FLOOR_UA[p] / 1000 * (24 - awake_h)
+           + (WIFI_MAH if wifi else 0.0))
+    counts = dict(reads=reads, listens=listens, served=served, read=r_mah, read_s=r_s,
+                  listen=l_mah, listen_s=l_s)
+    return mah, (reads + served) * pms, counts
+
+
+def now_load():
+    """Today's firmware (19.4-min cycle): 15 listens and one full read, 60 s sleep after each."""
+    l_mah, l_s = listen_event("M1", 0)
+    r_mah, r_s, pms = read_event("M1", 0)
+    cycle = 16 * 60 + 15 * l_s + r_s
+    reads = 86400 / cycle
+    awake_h = reads * (15 * l_s + r_s) / 3600
+    mah = reads * (15 * l_mah + r_mah) + FLOOR_UA[0] / 1000 * (24 - awake_h) + WIFI_MAH
+    return mah, reads * pms, reads
+
+
+# Load profiles: (firmware, 0 nominal / 1 pessimistic, schedules from normal to survival).
+PROFILES = {
+    "M1 nominal": ("M1", 0, ("normal",)),
+    "M1 pessimistic": ("M1", 1, ("normal",)),
+    "M2 nominal": ("M2", 0, ("normal",)),
+    "M2 pessimistic": ("M2", 1, ("normal",)),
+    "M2 adaptive": ("M2", 0, ("normal", "lean", "survival")),
+    "M2 adaptive pessimistic": ("M2", 1, ("normal", "lean", "survival")),
+    "M2 adaptive, 2-min listen": ("M2", 0, ("normal", "lean, 2-min listen", "survival, 2-min listen")),
+    "M2 adaptive, 2-min listen, pessimistic": ("M2", 1, ("normal", "lean, 2-min listen",
+                                                          "survival, 2-min listen")),
+}
+
+
+def r2_modes(profile):
+    """Hourly Wh and PMS Wh per mode, plus the hibernation and UVLO-off drains in Wh/h."""
+    if profile == "M1 now (19.4-min cycle)":
+        mah, pms, _r = now_load()
+        modes, p = [(mah / 24 * V_NOM / 1000, pms / 24 * V_NOM / 1000)], 0
+    else:
+        fw, p, scheds = PROFILES[profile]
+        modes = []
+        for s in scheds:
+            mah, pms, _c = day_load(fw, p, s)
+            modes.append((mah / 24 * V_NOM / 1000, pms / 24 * V_NOM / 1000))
+    hib_wh = (FLOOR_UA[p] / 1000 + HIB_CHECK_MAH) * V_NOM / 1000
+    return modes, hib_wh, OFF_UA[p] / 1e6 * V_NOM
+
+
+# ---------------------------------------------------------------- policy and interlock
+
+# Low-energy policy (ARCHITECTURE.md section 6, D13).
+# lean / surv: (enter below, leave above) on the firmware's charge estimate, which is off by
+#   soc_bias. The revision-2 values are 45/55 % and 20/25 % raised by the 15 % estimate error,
+#   so an estimate that reads 15 % high still enters survival at a true 20 %. That covers the
+#   longest stretch without charging (about 60 days at the energy corner) at the pessimistic
+#   survival load, 12.6 mAh/day, with today's pack.
+# hib_at / restart: hibernate below, resume in the lowest schedule above. These two use the
+#   battery voltage near empty, where the curve is steep, so the model applies them to the true
+#   charge. release: the TPS3840 (3.1 V) lets the converter restart at about 3.3 V; the ESP32
+#   then boots into hibernation.
+R1_POLICY = dict(lean=(0.40, 0.50), surv=(0.15, 0.20), hib_at=None, restart=0.05, release=0.05)
+R2_POLICY = dict(lean=(0.60, 0.70), surv=(0.35, 0.40), hib_at=0.03, restart=0.12, release=0.02)
+SOC_ERROR = 0.15             # the firmware's charge estimate may be off by this much either way (assumed)
+
+# Interlock trips at the NTC in deg C: (cold off, cold on, hot off, hot on), from
+# calc/interlock_trips.py. The energy corner puts every tolerance toward less charging.
+GATE_NOMINAL = (1.71, 2.11, 43.26, 43.04)
+GATE_CORNER = (2.69, 3.06, 42.16, 41.97)
+GATE_R1 = (1.0, 1.0, 44.0, 44.0)           # revision 1: stateless +1 / +44 C
+
+
+def gate(ok, t, powered, trips):
+    """Interlock output after one hour. Unpowered means off (TLV3012B power-on reset)."""
+    if not powered:
+        return False
+    cold_off, cold_on, hot_off, hot_on = trips
+    if ok:
+        return cold_off <= t <= hot_off
+    return cold_on <= t <= hot_on
+
+
+def simulate(rows, modes, hib_wh, off_wh, policy, ah=10.2, wp=10.0, trips=GATE_NOMINAL,
+             reset="night", soc_bias=0.0):
     """Chronological hourly battery model. Returns per-season statistics.
 
-    sun_k: cell temperature = air + sun_k * G(i), an illustrative box warming term.
-    heater: dict(ua=W/K, c=J/K, p_max=W, target=deg C) heats the pack from panel power
-            only, before charging; the pack follows a first-order thermal model.
+    reset: "night" means the panel-powered interlock loses power whenever the panel is
+           dark and restarts off; "retain" keeps its state across nights (sensitivity).
+    soc_bias: the firmware's charge estimate minus the true charge, as a fraction of the
+              usable energy.
+    Cell temperature = air temperature T2m (assumed).
     """
-    modes = []
-    for name, ev, cad, floor, margin in PROFILES[profile]:
-        mah, pms_mah = daily_mah(ev, cad, floor, margin)
-        modes.append((name, mah / 24 * V_NOM / 1000, pms_mah / 24 * V_NOM / 1000))
-    floor_wh = PROFILES[profile][0][3] / 1e6 * V_NOM    # the profile's own sleep floor
+    lean_at, lean_off = policy["lean"]
+    surv_at, surv_off = policy["surv"]
+    hib_at, restart, release = policy["hib_at"], policy["restart"], policy["release"]
     e_max = ah * USABLE * V_NOM
     p_clip = I_CHG * V_CHG
-    e, mode, down = e_max, 0, False
-    t_pack = None
+    retain = reset == "retain"
+    last = len(modes) - 1
+    e, state, mode, ok = e_max, "run", 0, False
     stats = {}
-    run, longest = 0, (0, None)
-    for day, p, g, t_air in rows:
-        s = stats.setdefault(season_of(day), dict(down_h=0, min_soc=1.0, lean_h=0, surv_h=0))
-        pv = p * wp / 1000 / PV_LOSS                      # panel power at MPP, W
-        if heater:
-            if t_pack is None:
-                t_pack = t_air
-            tau = heater["c"] / heater["ua"]
-            a = math.exp(-3600 / tau)
-            p_heat = 0.0
-            if pv > 0 and t_pack < heater["target"]:
-                t_eq_needed = (heater["target"] - t_pack * a) / (1 - a)
-                p_need = heater["ua"] * (t_eq_needed - t_air)
-                p_heat = max(0.0, min(p_need, heater["p_max"], pv))
-            t_start = t_pack
-            t_eq = t_air + p_heat / heater["ua"]
-            t_pack = t_eq + (t_pack - t_eq) * a
-            t_cell = min(t_start, t_pack)
-            pv -= p_heat
-        else:
-            t_cell = t_air + sun_k * g
-        charge = min(pv * ETA_CHG, p_clip) if t_low <= t_cell <= t_high else 0.0
-        if down:
-            load = floor_wh
-        else:
-            _name, load, pms = modes[mode]
+    run, longest, run_start = 0, (0, None), None
+    for day, p, _g, t_air, season in rows:
+        s = stats.get(season)
+        if s is None:
+            s = stats[season] = dict(out_h=0, min_soc=1.0, lean_h=0, surv_h=0, hibs=0, trips=0,
+                                     restarts=0)
+        ok = gate(ok, t_air, retain or p > 0, trips)
+        charge = min(p * wp / 1000 / PV_LOSS * ETA_CHG, p_clip) if ok else 0.0
+        if state == "run":
+            load, pms = modes[mode]
             if t_air < PM_SKIP_C:
                 load -= pms
+        elif state == "hib":
+            load = hib_wh
+        else:
+            load = off_wh
         e += charge - load - e * SELF_DIS
         if e <= 0.0:
-            e, down = 0.0, True
+            e = 0.0
+            if state != "off":
+                s["trips"] += 1
+            state = "off"
         elif e > e_max:
             e = e_max
         soc = e / e_max
-        if down and soc >= RESTART:
-            down = False
-            mode = len(modes) - 1
-        if len(modes) > 1 and not down:
-            if mode == 0 and soc < LEAN_AT:
-                mode = 1
-            if mode == 1 and soc < SURV_AT:
-                mode = 2
-            elif mode == 1 and soc > LEAN_OFF:
-                mode = 0
-            if mode == 2 and soc > SURV_OFF:
-                mode = 1
-        if down:
-            s["down_h"] += 1
-            s["min_soc"] = 0.0
-            if run == 0:
-                run_start = day
-            run += 1
-            if run > longest[0]:
-                longest = (run, run_start)
-        else:
-            run = 0
-            s["min_soc"] = min(s["min_soc"], soc)
-            s["lean_h"] += mode == 1
-            s["surv_h"] += mode == 2
+        if state == "off" and soc >= release:
+            state = "hib"
+        if state == "hib" and soc >= restart:
+            state, mode = "run", last
+            s["restarts"] += 1
+        elif state == "run":
+            if hib_at is not None and soc < hib_at:
+                state = "hib"
+                s["hibs"] += 1
+            elif last:
+                est = soc + soc_bias
+                if mode == 0 and est < lean_at:
+                    mode = 1
+                if mode == 1 and est < surv_at:
+                    mode = 2
+                elif mode == 1 and est > lean_off:
+                    mode = 0
+                if mode == 2 and est > surv_off:
+                    mode = 1
+        s["min_soc"] = min(s["min_soc"], soc)
+        if state != "run":
+            s["out_h"] += 1
+            if 2005 <= season <= 2022:
+                if run == 0:
+                    run_start = day
+                run += 1
+                if run > longest[0]:
+                    longest = (run, run_start)
+            continue
+        run = 0
+        s["lean_h"] += mode == 1
+        s["surv_h"] += mode == 2
     full = {k: v for k, v in stats.items() if 2005 <= k <= 2022}
-    return full, longest, modes
+    return full, longest
 
 
 def summarize(full, longest):
     seasons = sorted(full)
-    out_seasons = [k for k in seasons if full[k]["down_h"]]
-    down_days = sum(full[k]["down_h"] for k in seasons) / 24
-    worst = max(seasons, key=lambda k: full[k]["down_h"])
-    mins = sorted(full[k]["min_soc"] for k in seasons)
-    surv_days = sum(full[k]["surv_h"] for k in seasons) / 24
-    lean_days = sum(full[k]["lean_h"] for k in seasons) / 24
+    out_seasons = [k for k in seasons if full[k]["out_h"]]
+    worst = max(seasons, key=lambda k: full[k]["out_h"])
     return dict(
-        n_out=len(out_seasons), n=len(seasons), down_days=down_days,
-        worst=(full[worst]["down_h"] / 24, f"{worst}/{(worst + 1) % 100:02d}"),
+        n_out=len(out_seasons), n=len(seasons),
+        out_days=sum(full[k]["out_h"] for k in seasons) / 24,
+        worst=(full[worst]["out_h"] / 24, f"{worst}/{(worst + 1) % 100:02d}"),
         longest=(longest[0] / 24, longest[1]),
-        median_min_soc=mins[len(mins) // 2], low_min_soc=mins[0],
-        lean_days=lean_days, surv_days=surv_days,
+        low_min_soc=min(full[k]["min_soc"] for k in seasons),
+        lean_days=sum(full[k]["lean_h"] for k in seasons) / 24,
+        surv_days=sum(full[k]["surv_h"] for k in seasons) / 24,
+        hibs=sum(full[k]["hibs"] for k in seasons),
+        trips=sum(full[k]["trips"] for k in seasons),
+        restarts=sum(full[k]["restarts"] for k in seasons),
     )
 
 
-def required_ah(rows, profile, **kw):
-    """Smallest nominal pack (Ah) with no brown-out in any full season, to 0.1 Ah."""
+def run_case(rows, profile, policy=R2_POLICY, **kw):
+    modes, hib_wh, off_wh = r2_modes(profile)
+    full, longest = simulate(rows, modes, hib_wh, off_wh, policy, **kw)
+    return summarize(full, longest)
+
+
+def worst_case(rows, profile, **kw):
+    """Run with the charge estimate off by -SOC_ERROR, 0 and +SOC_ERROR; return all three and
+    the one with the most outage hours (then the lowest charge)."""
+    if "adaptive" not in profile:      # the estimate only moves the adaptive schedule
+        r = run_case(rows, profile, **kw)
+        return [r, r, r], r
+    runs = [run_case(rows, profile, soc_bias=b, **kw) for b in (-SOC_ERROR, 0.0, SOC_ERROR)]
+    return runs, max(runs, key=lambda r: (r["out_days"], -r["low_min_soc"]))
+
+
+def required_ah(rows, profile, estimate_error=False, **kw):
+    """Smallest nominal pack (Ah) with no outage hour in any full season, to 0.1 Ah.
+    With estimate_error, an adaptive profile must also pass at +-SOC_ERROR."""
+    def fails(ah):
+        if estimate_error:
+            return worst_case(rows, profile, ah=ah, **kw)[1]["n_out"] > 0
+        return run_case(rows, profile, ah=ah, **kw)["n_out"] > 0
     lo, hi = 1.0, 400.0
-    full, _l, _m = simulate(rows, profile, ah=hi, **kw)
-    if any(v["down_h"] for v in full.values()):
+    if fails(hi):
         return None
     while hi - lo > 0.1:
         mid = (lo + hi) / 2
-        full, _l, _m = simulate(rows, profile, ah=mid, **kw)
-        if any(v["down_h"] for v in full.values()):
+        if fails(mid):
             lo = mid
         else:
             hi = mid
     return hi
 
 
-def fmt_row(label, profile, r):
-    worst_d, worst_s = r["worst"]
-    long_d, long_start = r["longest"]
-    worst = f"{worst_d:.0f} ({worst_s})" if worst_d else "-"
-    longest = f"{long_d:.0f} d from {long_start[:4]}-{long_start[4:6]}-{long_start[6:]}" if long_d else "-"
-    modes = f"{r['lean_days']:.0f} / {r['surv_days']:.0f}" if profile == "M2 adaptive" else "-"
-    return (f"| {label} | {profile} | {r['n_out']}/{r['n']} | {r['down_days']:.0f} | "
-            f"{worst} | {longest} | {r['low_min_soc'] * 100:.0f} % | {modes} |")
+def longest_without_charge(rows, trips, reset="night"):
+    """Longest run of hours with no charging through the interlock: (days, first day)."""
+    ok, run, best, start = False, 0, (0, None), None
+    for day, p, _g, t, _s in rows:
+        ok = gate(ok, t, reset == "retain" or p > 0, trips)
+        if ok and p > 0:
+            run = 0
+            continue
+        if run == 0:
+            start = day
+        run += 1
+        if run > best[0]:
+            best = (run, start)
+    return best[0] / 24, best[1]
 
 
-def fmt_cell(r):
-    if not r["n_out"]:
-        return f"none (lowest {r['low_min_soc'] * 100:.0f} %)"
-    return f"{r['n_out']}/18, {r['down_days']:.0f} d (longest {r['longest'][0]:.0f} d)"
+# ---------------------------------------------------------------- re-review check (R2-M1)
+
+def cmd_r2check(path):
+    inputs, rows = load_series(path)
+    print(f"Series: {describe(path, inputs)}")
+    print("Revision-1 M2 adaptive loads and policy; only the interlock changes.")
+    print("| Cold disable / re-enable | Outage seasons | Outage days | Lean / survival days | Minimum SOC |")
+    print("|---|---:|---:|---|---:|")
+    modes, floor_wh = r1_modes()
+    cases = [("Baseline stateless +1 C", GATE_R1, "retain"),
+             ("+1 / +3 C", (1.0, 3.0, 43.0, 40.0), "retain"),
+             ("+1 / +4 C", (1.0, 4.0, 43.0, 40.0), "retain"),
+             ("+2 / +5 C", (2.0, 5.0, 43.0, 40.0), "retain")]
+    for label, trips, reset in cases:
+        full, longest = simulate(rows, modes, floor_wh, floor_wh, R1_POLICY, trips=trips, reset=reset)
+        r = summarize(full, longest)
+        print(f"| {label} | {r['n_out']} | {r['out_days']:.2f} | {r['lean_days']:.2f} / "
+              f"{r['surv_days']:.2f} | {r['low_min_soc'] * 100:.3f} % |")
 
 
-HEATER = dict(ua=0.05, c=200.0, p_max=2.0, target=5.0)
-MATRIX_PROFILES = ("M1 nominal", "M1 pessimistic", "M2 nominal", "M2 adaptive")
+# ---------------------------------------------------------------- revision-2 scenarios
+
+def gated_daily(rows, trips, reset="night", wp=10.0):
+    """Battery-side Wh per UTC day through the interlock state machine (no battery limit)."""
+    days, order, ok = {}, [], False
+    for day, p, _g, t, _s in rows:
+        if day not in days:
+            days[day] = 0.0
+            order.append(day)
+        ok = gate(ok, t, reset == "retain" or p > 0, trips)
+        if ok:
+            days[day] += p * wp / 1000 / PV_LOSS * ETA_CHG
+    return [(d, days[d]) for d in order]
 
 
-def december_table(rows):
-    """December harvest statistics into the battery for the harvest table."""
-    print("| December case, 45 deg south | No temperature limit, Wh/day | Charging 0-45 C, Wh/day | Charging +1 to +44 C, Wh/day |")
+def december_table(rows, label):
+    print(f"| December, {label} | No temperature limit | Interlock nominal, reset at night | "
+          f"Interlock energy corner, reset at night |")
     print("|---|---|---|---|")
-    series = [daily_harvest(rows, t_low=-99.0, t_high=99.0), daily_harvest(rows),
-              daily_harvest(rows, t_low=1.0, t_high=44.0)]
+    series = [gated_daily(rows, (-99.0, -99.0, 99.0, 99.0)), gated_daily(rows, GATE_NOMINAL),
+              gated_daily(rows, GATE_CORNER)]
     decs = [sorted(h for d, h in s if d[4:6] == "12") for s in series]
     stats = [
-        ("Mean", lambda v, s: sum(v) / len(v)),
-        ("Median day", lambda v, s: v[len(v) // 2]),
-        ("10th-percentile day", lambda v, s: v[len(v) // 10]),
-        ("Worst 7-day window", lambda v, s: december_windows(s, 7)[0]),
-        ("Worst 14-day window", lambda v, s: december_windows(s, 14)[0]),
+        ("Mean, Wh/day", lambda v, s: f"{sum(v) / len(v):.2f}"),
+        ("Median day, Wh", lambda v, s: f"{v[len(v) // 2]:.2f}"),
+        ("Worst 7-day window, Wh/day", lambda v, s: "{:.2f} ({}-{})".format(*december_windows(s, 7))),
+        ("Worst 14-day window, Wh/day", lambda v, s: "{:.2f} ({}-{})".format(*december_windows(s, 14))),
     ]
     for name, fn in stats:
-        cells = [f"{fn(v, s):.2f}" for v, s in zip(decs, series)]
-        print(f"| {name} | " + " | ".join(cells) + " |")
-    for s, label in zip(series, ("ungated", "0-45 C", "+1-44 C")):
-        for n in (7, 14):
-            mean, a, b = december_windows(s, n)
-            print(f"  worst {n}-day, {label}: {mean:.3f} Wh/day, {a}-{b}")
+        print(f"| {name} | " + " | ".join(fn(v, s) for v, s in zip(decs, series)) + " |")
 
 
-def cmd_scenarios(path45, path70=None):
-    _i, rows45 = load_series(path45)
-    rows70 = load_series(path70)[1] if path70 else None
-    december_table(rows45)
-    print("Daily loads (battery side):")
-    for prof, modes in PROFILES.items():
-        for name, ev, cad, floor, margin in modes:
-            mah, pms = daily_mah(ev, cad, floor, margin)
-            print(f"  {prof:24s} {name:9s} {mah:7.1f} mAh = {mah * V_NOM / 1000:.3f} Wh/day (PM {pms:.1f} mAh)")
-    daily = daily_harvest(rows45)
-    dec = [h for d, h in daily if d[4:6] == "12"]
-    dec_ungated = [h for d, h in daily_harvest(rows45, t_low=-99) if d[4:6] == "12"]
-    print(f"45 deg December mean into battery: {sum(dec) / len(dec):.3f} Wh/day gated, "
-          f"{sum(dec_ungated) / len(dec_ungated):.3f} Wh/day if charging were allowed at any temperature")
-    for n in (7, 14):
-        mean, a, b = december_windows(daily, n)
-        print(f"45 deg worst December {n}-day window, gated: {mean:.3f} Wh/day, {a}-{b}")
-    for name, mah in (("M1 nominal", 371.73), ("M2 nominal", 181.52)):
-        d, a, b = max_deficit(daily, mah * V_NOM / 1000)
-        print(f"45 deg daily-netting max deficit {name}: {d:.2f} Wh, {a}-{b}")
+def fmt_cell(r, modes=False):
+    if not r["n_out"]:
+        text = f"none (lowest {r['low_min_soc'] * 100:.0f} %)"
+    else:
+        text = f"{r['n_out']}/18, {r['out_days']:.0f} d (longest {r['longest'][0]:.0f} d)"
+    if modes:
+        text += f"; lean {r['lean_days']:.0f} d, survival {r['surv_days']:.0f} d"
+    return text
 
-    g1 = dict(t_low=1.0, t_high=44.0)
-    cases = [
-        ("Lower cutoff 0 C at the cells (exact, no tolerance)", rows45, {}),
-        ("Lower cutoff +1 C (interlock error <= 1 K)", rows45, g1),
-        ("Lower cutoff +2 C (interlock error <= 2 K)", rows45, dict(t_low=2.0, t_high=43.0)),
-        ("Lower cutoff +3 C (interlock error <= 3 K)", rows45, dict(t_low=3.0, t_high=42.0)),
-        ("Pack x2 (20.4 Ah), cutoff +1 C", rows45, dict(g1, ah=20.4)),
-        ("Pack x3 (30.6 Ah), cutoff +1 C", rows45, dict(g1, ah=30.6)),
-        ("Panel 20 W, cutoff +1 C", rows45, dict(g1, wp=20.0)),
-    ]
-    if rows70:
-        cases.append(("Tilt 70 deg, cutoff +1 C", rows70, g1))
-    cases += [
-        ("Sun-warmed box, cells +1 K per 100 W/m2 (illustrative), cutoff +1 C", rows45,
-         dict(g1, sun_k=0.01)),
-        ("Panel-powered pack heater (illustrative), cutoff +1 C", rows45, dict(g1, heater=HEATER)),
-        ("Cells chargeable down to -20 C (e.g. LTO)", rows45, dict(t_low=-20.0)),
-    ]
-    results = []
-    for label, rows, kw in cases:
-        for prof in MATRIX_PROFILES:
-            full, longest, _m = simulate(rows, prof, **kw)
-            results.append((label, prof, summarize(full, longest)))
+
+def fmt_ah(need):
+    if need is None:
+        return "> 400 Ah"
+    return f"{need:.1f} Ah = {math.ceil(need / CELL_AH)} cells ({math.ceil(need / (CELL_AH * 0.8))})"
+
+
+def per_winter(r):
+    return f"{r['lean_days'] / r['n']:.1f} / {r['surv_days'] / r['n']:.1f}"
+
+
+def cmd_scenarios(path_sw45, path_sw70, path_s45):
+    inp45, sw45 = load_series(path_sw45)
+    inp70, sw70 = load_series(path_sw70)
+    inps, s45 = load_series(path_s45)
+    print("Inputs:")
+    for path, inp in ((path_sw45, inp45), (path_sw70, inp70), (path_s45, inps)):
+        print(f"  {path.split('/')[-2]}: {describe(path, inp)}")
     print()
-    print("| Case | Load profile | Seasons with brown-out | Brown-out days, 18 seasons | Worst season, days | Longest brown-out | Lowest charge | Lean / survival days |")
+
+    print("Event timeline (battery side):")
+    for fw in ("M1", "M2"):
+        for p, tag in ((0, "nominal"), (1, "pessimistic")):
+            l_mah, l_s = listen_event(fw, p)
+            r_mah, r_s, pms = read_event(fw, p)
+            s_mah, s_s, _x = read_event(fw, p, pm=False)
+            print(f"  {fw} {tag:11s} listen {l_s:4.1f} s {l_mah * 1000:6.1f} uAh | full read {r_s:5.1f} s "
+                  f"{r_mah:.3f} mAh (PMS {pms:.3f}) | read without PM {s_s:4.1f} s {s_mah:.3f} mAh")
+    print()
+    print("| Profile | Schedule | Full reads / day | Listens / day | Requests heard | Requests served / day "
+          "| mAh / day | Wh / day |")
     print("|---|---|---|---|---|---|---|---|")
-    for label, prof, r in results:
-        print(fmt_row(label, prof, r))
+    for prof, (fw, p, scheds) in PROFILES.items():
+        for s in scheds:
+            mah, _pms, c = day_load(fw, p, s)
+            heard = min(1.0, GATEWAY_WINDOW_S / SCHEDULES[s][1])
+            print(f"| {prof} | {s} | {c['reads']:.0f} | {c['listens']:.0f} | {heard * 100:.0f} % | "
+                  f"{c['served']:.1f} | {mah:.1f} | {mah * V_NOM / 1000:.3f} |")
+    mah, _pms, reads = now_load()
+    print(f"| M1 now (19.4-min cycle) | today | {reads:.1f} | {reads * 15:.0f} | 100 % | 0 | {mah:.1f} | "
+          f"{mah * V_NOM / 1000:.3f} |")
+    for p, tag in ((0, "typical"), (1, "pessimistic")):
+        print(f"  Hibernation {tag}: {(FLOOR_UA[p] / 1000 + HIB_CHECK_MAH) * 24:.2f} mAh/day; "
+              f"UVLO off: {OFF_UA[p] * 24 / 1000:.2f} mAh/day")
     print()
-    print("| Case (10 W, 45 deg, 10.2 Ah unless stated) | " + " | ".join(MATRIX_PROFILES) + " |")
-    print("|---" * (len(MATRIX_PROFILES) + 1) + "|")
-    for label, _rows, _kw in cases:
-        cells = [fmt_cell(r) for lab, _p, r in results if lab == label]
+
+    december_table(sw45, "45 deg, azimuth 233 deg")
+    print()
+    december_table(s45, "45 deg south (revision-1 assumption)")
+    print()
+    for label, trips, reset in (("interlock nominal, reset at night", GATE_NOMINAL, "night"),
+                                ("energy corner, reset at night", GATE_CORNER, "night"),
+                                ("revision-1 gate +1 / +44 C, stateless", GATE_R1, "retain")):
+        days, first = longest_without_charge(sw45, trips, reset)
+        print(f"Longest stretch without charging, 45 deg, azimuth 233 deg, {label}: {days:.1f} d from {first}")
+    print()
+
+    corner = dict(trips=GATE_CORNER)
+    cases = [
+        ("Revision-1 gate: stateless +1 / +44 C", sw45, dict(trips=GATE_R1, reset="retain")),
+        ("Interlock nominal (+1.7 off / +2.1 on), reset at night", sw45, {}),
+        ("Interlock energy corner (+2.7 / +3.1), reset at night", sw45, corner),
+        ("Energy corner, charge estimate 15 % high", sw45, dict(corner, soc_bias=SOC_ERROR)),
+        ("Energy corner, charge estimate 15 % low", sw45, dict(corner, soc_bias=-SOC_ERROR)),
+        ("Review sensitivity +1 / +4 C, state kept overnight", sw45,
+         dict(trips=(1.0, 4.0, 43.0, 40.0), reset="retain")),
+        ("Energy corner, tilt 70 deg", sw70, corner),
+        ("Energy corner, panel due south", s45, corner),
+    ]
+    cols = ("M1 nominal", "M1 pessimistic", "M2 nominal", "M2 adaptive", "M2 adaptive pessimistic")
+    print("Lean and survival days are totals over the 18 winters.")
+    print("| Case (10 W, 45 deg, azimuth 233 deg, 10.2 Ah unless stated) | " + " | ".join(cols) + " |")
+    print("|---" * (len(cols) + 1) + "|")
+    for label, rows, kw in cases:
+        cells = [fmt_cell(run_case(rows, prof, **kw), "adaptive" in prof) for prof in cols]
         print(f"| {label} | " + " | ".join(cells) + " |")
     print()
-    print("Smallest nominal pack with no brown-out in 2005/06-2022/23 (10 W, 45 deg):")
-    for gate in (0.0, 1.0, 3.0):
-        for prof in ("M1 now (19.4-min cycle)", "M1 nominal", "M1 pessimistic", "M2 nominal",
-                     "M2 pessimistic", "M2 adaptive"):
-            need = required_ah(rows45, prof, t_low=gate, t_high=45.0 - gate)
-            print(f"  gate {gate:+.0f} C  {prof:24s} " + (f"{need:.1f} Ah" if need else "> 400 Ah"))
+
+    print("Smallest nominal pack with no outage hour in 2005/06-2022/23 (10 W, 45 deg, azimuth 233 deg),")
+    print("as Ah and as 3.4 Ah cells in parallel, new (and with 20 % capacity fade):")
+    print("| Load profile | Interlock nominal | Energy corner | Energy corner, charge estimate off by up to 15 % |")
+    print("|---|---|---|---|")
+    for prof in ("M1 now (19.4-min cycle)",) + tuple(PROFILES):
+        cells = [fmt_ah(required_ah(sw45, prof)), fmt_ah(required_ah(sw45, prof, **corner))]
+        if "adaptive" in prof:
+            cells.append(fmt_ah(required_ah(sw45, prof, estimate_error=True, **corner)))
+        else:
+            cells.append("as energy corner (no estimate used)")
+        print(f"| {prof} | " + " | ".join(cells) + " |")
+    print()
+
+    packs = [(3, 1.0), (5, 1.0), (8, 1.0), (8, 0.8), (14, 1.0), (14, 0.8)]
+    print("Pack options at the energy corner (10 W, 45 deg, azimuth 233 deg). Adaptive profiles: the worst")
+    print("result over a charge estimate 15 % low, exact and 15 % high, then lean / survival days per winter")
+    print("for each of the three.")
+    print("| Pack | M2 adaptive | lean / survival d per winter (low / exact / high) | M2 adaptive pessimistic "
+          "| lean / survival d per winter (low / exact / high) | M2 nominal, fixed 15 min | "
+          "M2 pessimistic, fixed 15 min | M1 now |")
+    print("|---|---|---|---|---|---|---|---|")
+    for n, health in packs:
+        ah = n * CELL_AH * health
+        label = f"{n} cells, {ah:.1f} Ah" + (" (20 % faded)" if health < 1 else "")
+        cells = []
+        for prof in ("M2 adaptive", "M2 adaptive pessimistic"):
+            runs, worst = worst_case(sw45, prof, ah=ah, **corner)
+            cells += [fmt_cell(worst), ", ".join(per_winter(r) for r in runs)]
+        for prof in ("M2 nominal", "M2 pessimistic", "M1 now (19.4-min cycle)"):
+            cells.append(fmt_cell(run_case(sw45, prof, ah=ah, **corner)))
+        print(f"| {label} | " + " | ".join(cells) + " |")
+    print()
+
+    print("Keeping every gateway request heard (listen every 2 min in lean and survival), energy corner:")
+    print("| Pack | M2 adaptive, 2-min listen | lean / survival d per winter (low / exact / high) "
+          "| M2 adaptive, 2-min listen, pessimistic | lean / survival d per winter (low / exact / high) |")
+    print("|---|---|---|---|---|")
+    for n, health in packs:
+        ah = n * CELL_AH * health
+        label = f"{n} cells, {ah:.1f} Ah" + (" (20 % faded)" if health < 1 else "")
+        cells = []
+        for prof in ("M2 adaptive, 2-min listen", "M2 adaptive, 2-min listen, pessimistic"):
+            runs, worst = worst_case(sw45, prof, ah=ah, **corner)
+            cells += [fmt_cell(worst), ", ".join(per_winter(r) for r in runs)]
+        print(f"| {label} | " + " | ".join(cells) + " |")
+    print()
+
+    print("Low-energy recovery at the energy corner, today's 10.2 Ah pack: hibernation entries, restarts")
+    print("into the lowest schedule, UVLO cut-offs (TPS3840) and the longest outage, over 18 winters.")
+    print("| Load profile | Hibernations | Restarts | UVLO cut-offs | Longest outage |")
+    print("|---|---|---|---|---|")
+    no_hib = dict(R2_POLICY, hib_at=None)
+    rows = [(prof, prof, {}) for prof in ("M1 now (19.4-min cycle)", "M1 nominal", "M1 pessimistic",
+                                          "M2 nominal", "M2 pessimistic", "M2 adaptive",
+                                          "M2 adaptive pessimistic")]
+    rows += [(f"{prof}, firmware never hibernates (TPS3840 only)", prof, dict(policy=no_hib))
+             for prof in ("M1 nominal", "M2 pessimistic")]
+    for label, prof, kw in rows:
+        _runs, r = worst_case(sw45, prof, **dict(corner, **kw))
+        longest = f"{r['longest'][0]:.1f} d from {r['longest'][1]}" if r["longest"][1] else "none"
+        print(f"| {label} | {r['hibs']} | {r['restarts']} | {r['trips']} | {longest} |")
 
 
 if __name__ == "__main__":
     if len(sys.argv) >= 3 and sys.argv[1] == "codex":
         cmd_codex(sys.argv[2])
-    elif len(sys.argv) >= 3 and sys.argv[1] == "scenarios":
-        cmd_scenarios(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)
+    elif len(sys.argv) >= 3 and sys.argv[1] == "r2check":
+        cmd_r2check(sys.argv[2])
+    elif len(sys.argv) >= 5 and sys.argv[1] == "scenarios":
+        cmd_scenarios(sys.argv[2], sys.argv[3], sys.argv[4])
     else:
         sys.exit(__doc__)
