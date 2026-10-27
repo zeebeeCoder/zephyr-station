@@ -1,13 +1,26 @@
-Output of surge_bound.py for F1 revision 5, run 27.10.2026 (computed, not measured).
-surge_bound.py SHA-256: afa94fe73151edf88c115e9dcc8509f7e79e2e1d9fcff017610122f0d03f9d0c
+Output of surge_bound.py for F1 revision 6, run 27.10.2026 (computed, not measured).
+surge_bound.py SHA-256: 7d49f033637c74d7917570a69ac1f73d2860868cf0f78cdfce3e68e0eacc30d7
 
 $ python3 -I docs/calc/surge_bound.py
-SM15T33CA at 11.3 A (ST note 3): 45.7 - 0.333 x (33.0 - 11.3) = 38.4739 V from Tj 25 C
-Self-heating: <= 0.745 J a pulse, once in 60 s, through 75 K/W: +0.93 K mean, so Tj starts at <= 51 C
-From Tj 51 C (ST note 2): x (1 + 0.00098 x 26) = 39.4542 V
-TPS26600 IN: + 10 nH x 1.13 A/us = 39.4655 V -> IN <= 39.47 V (either polarity; rated 62 V, -60 V)
-LT3652 VIN: + 12.3 A x sqrt(5 nH / 10 uF) = +0.2750 V -> VIN <= 39.75 V (rated 40 V absolute; margin 0.25 V)
+SM15T33CA at 11.3 A (ST Rev 8 note 3): 45.7 - 0.333 x (33.0 - 11.3) = 38.4739 V from Tj 25 C
+Pulse envelope: <= 11.3 A to 13 us, then halving every 1.2 ms: charge <= 19.71 mC, energy <= 45.7 V x charge = 0.901 J
+Pre-pulse heating (periodic, passive network): <= 0.901 J / 60 s x 120 K/W = 1.80 K; plus 5 K local on a 50 C board, so Tj starts at <= 57 C
+From Tj 57 C (ST note 2): x (1 + 0.00098 x 32) = 39.6804 V
+TPS26600 IN, switch closed: + 10 nH x 1.13 A/us = 39.6917 V -> IN <= 39.70 V (either polarity; rated 62 V, -60 V)
+LT3652 VIN: + 12.3 A x sqrt(5 nH / 10 uF) = +0.2750 V -> VIN <= 39.97 V (rated 40 V absolute; margin 0.03 V)
   sqrt(L/C) <= 22.4 mOhm, e.g. 5 nH with 10 uF or 10 nH with 20 uF
-TPS7B6933 input (through its diode and 1 kOhm, no Zener credited): <= 39.47 V (operating <= 40 V, 45 V for 200 ms)
-Pulse rating from Tj 51 C (Rev 4 Figure 1): 89.6 % of 1500 W = 1344 W, 29.6 A; the defined pulse is <= 446 W (33 %), 11.3 A (38 %)
+  valid while IN stays <= 39.70 V with the switch closed and the loop current is <= 12.3 A when VIN reaches it (energy 1/2 C (VIN - IN max)^2 + 1/2 L i^2 can't grow)
+TPS7B6933 input (through its diode and 1 kOhm, no Zener credited): <= 39.70 V (operating <= 40 V, 45 V for 200 ms)
+Pulse rating from Tj 57 C (Rev 8 Figure 3: 100 % up to >= 110 C): 1500 W, 33 A; the defined pulse is <= 449 W (30 %), 11.3 A (34 %)
 Cold breakdown at -30 C: >= 31.4 x (1 - 0.00098 x 55) = 29.71 V, above the cold Voc 28 V
+
+Switch opening (R6-M2), no switch timing credited:
+  IN: up to 12.3 A moves into C_IN 1 uF || TVS loop 10 nH (sqrt(L/C) = 100 mOhm): IN <= 50.42 V, inside the TPS26600's 62 V; above the LDO's 45 V only through its 1 kOhm and input capacitor
+  OUT: the loop current continues through the OUT Schottky into C_VIN (VIN term above). OUT then sits at -VF of that Schottky at up to 12.3 A, against the TPS26600's -0.3 V OUT rating: open unless the interrupted current is bounded
+  VIN margin left for recovery and C_IN's stored charge feeding the loop: 0.03 V
+
+Sensitivity (same model):
+  this envelope: Tj <= 57 C, IN <= 39.70 V, VIN <= 39.97 V (margin 0.03 V)
+  Rth 80 K/W (copper, F3), 2 K local: Tj <= 54 C, IN <= 39.58 V, VIN <= 39.86 V (margin 0.14 V)
+  defined surge 10 A: Tj <= 57 C, IN <= 39.25 V, VIN <= 39.49 V (margin 0.51 V)
+  defined surge 8 A: Tj <= 57 C, IN <= 38.56 V, VIN <= 38.76 V (margin 1.24 V)

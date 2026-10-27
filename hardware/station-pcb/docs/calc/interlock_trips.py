@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Trip points of the charge interlock, with tolerances (F1 revision 5).
+"""Trip points of the charge interlock, with tolerances (F1 revision 6).
 
 Circuit (ARCHITECTURE.md D5): a ratiometric NTC divider and three TLV3012B comparators,
 all fed from the interlock rail VREG, plus a TPS3840PL30 (U4) that watches VREG itself.
@@ -16,22 +16,20 @@ Charging needs OUT1 AND OUT2 AND OUT3 AND U4 high (series FETs, see D5).
 
 Input filters (revision 4, R4-M1): one capacitor C_T on the NTC node V_T. Each comparator input
 that sees V_T is fed from it through R_IN, with no capacitor of its own. U1's tap reaches its
-input through R_F1 with C_F1 to AGND; U2's tap has no capacitor. The comparators' own input
-capacitance, common-mode and differential, is part of the network. filter_check() solves the
-whole network as one coupled RC circuit. For one set of component values it bounds the error
-between each comparator's two inputs for any history of VREG whose slope stays between -R_FALL
-and +R_RISE, and any history of OUT1 (RHYS's far end), starting from rest: short dips, restarts
-and charge left on the capacitors included. Over the component tolerances it searches (revision
-5, R5-M1): every vertex of the independent tolerance box, then the NTC across the band, a local
-ascent into the interior and random points. A search is not a proof that nothing larger exists,
-so the trips carry FILTER_ALLOWANCE times the largest error found.
+input through R_F1 with C_F1 to AGND; U2's tap has C_HOT (revision 6). The comparators' own
+input capacitance, common-mode and differential, is part of the network. filter_bound() bounds
+the error between each comparator's two inputs for any history of VREG whose slope stays between
+-R_FALL and +R_RISE, and any history of OUT1, starting from rest: short dips, restarts and
+charge left on the capacitors included. Revision 5 searched the tolerance box and doubled the
+largest error found; revision 6 (R6-M1) replaces that with an interval envelope over the whole
+box and NTC band (Mueller's comparison theorem), so the bound covers every value in the box.
+Exact responses at sample points check it (env_check).
 
-Every input is a datasheet value or a labelled assumption. Standard library only; the search
-runs on every CPU and takes a few minutes:
+Every input is a datasheet value or a labelled assumption. Standard library only; the bound
+runs on every CPU and takes about 20 minutes:
   python3 -I interlock_trips.py
 """
 
-import heapq
 import itertools
 import math
 import multiprocessing
@@ -107,13 +105,21 @@ C_T_PAR = (0.0, 50e-12)    # also on V_T: ESD diode, NTC cable, board (assumed)
 C_CM = (1e-12, 10e-12)     # each comparator input to AGND: 2 pF typical [TL], plus layout (assumed)
 C_DM = (0.0, 8e-12)        # between a comparator's inputs: 4 pF typical [TL], doubled (assumed)
 C_NODE = (0.5e-12, 5e-12)  # U1's tap node before R_F1 (assumed)
-BAND_K = 0.25            # each trip band is widened by this much for the filter error (K)
-T_DECADE = 12            # grid points a decade for finding the kernels' sign changes
-N_TOP = 64               # worst vertices kept for the NTC refinement and the checks beyond the band
-N_NTC = 17               # NTC values across the band for those vertices
-N_ASCENT = 8             # local ascents into the interior, from the worst points found
-N_RANDOM = 2000          # random interior points (fixed seeds)
-FILTER_ALLOWANCE = 2.0   # the trips carry this times the largest error the search finds (R5-M1)
+C_HOT = 100e-12          # U2's IN- (the hot tap) to AGND, C0G (revision 6, R6-M1): it keeps the
+                         # comparator's differential capacitance small against that node's own
+BAND_K = 0.5             # each trip band is widened by this much, more than either filter bound (K)
+ENV_DECADE = 40          # envelope output points a decade in the trip bands (checked at twice this)
+ENV_DECADE_BEYOND = 20   # the same beyond the bands, where the margins are large
+ENV_T = (1e-13, 50e-3)   # envelope grid, s: every bound has settled to its final value by the end
+ENV_H_MIN = 1e-3         # smallest sub-step, as a fraction of a grid step
+ENV_BEYOND = {1: (1.0, 1.2, 1.5, 2.5, None),   # NTC pieces beyond the band, as factors of its
+              2: (1.0, 0.8, 0.6, 0.3, 0.03)}   # colder end (U1, None = open) or hotter end (U2)
+ENV_POINTS = 64          # validation points per comparator (fixed seeds)
+# Upper rail (R6-N2): VREG never above V_TOP, start-up included. The TPS7B6933 regulates to
+# 3.4 V at most for 1-150 mA (this load is about 1 mA, so F2 confirms it with TI or enforces it;
+# F6 measures start-up). The NTC's self-heating, OUT1's switching excess and the gate drive
+# use it.
+V_TOP = VREG[2]
 
 # U3: LM4041-B (SNOS641I): 1.225 V +-0.2 % at 25 C, 100 ppm/K maximum average drift, taken over
 # the same 25 +- 30 K as the resistors (board temperature while charging is possible, assumed).
@@ -195,11 +201,17 @@ def corners(vreg_lo, vreg_hi):
 
 
 def slope_per_k(temps):
-    """Smallest |d(V_T / VREG) / dT| over temps (deg C) for the nominal NTC, per kelvin."""
-    def one(t):
-        ratio = [r_ntc(x, 1) / (RS + r_ntc(x, 1)) for x in (t - 0.05, t + 0.05)]
+    """Smallest |d(V_T / VREG) / dT| per kelvin over temps[0]..temps[1] (deg C) widened by
+    BAND_K, every 0.1 K, for every NTC corner (table spread and drift) and RS's tolerance. It
+    converts the filter bound and the leakage to kelvin (R6-M1)."""
+    t0, t1 = min(temps) - BAND_K, max(temps) + BAND_K
+    n = int(math.ceil((t1 - t0) / 0.1))
+
+    def one(t, k, d, rs):
+        ratio = [r_ntc(x, k) * (1 + d) / (rs + r_ntc(x, k) * (1 + d)) for x in (t - 0.05, t + 0.05)]
         return abs(ratio[1] - ratio[0]) / 0.1
-    return min(one(t) for t in temps)
+    return min(one(t0 + i * (t1 - t0) / n, k, d, rs) for i in range(n + 1) for k in (0, 1, 2)
+               for d in (-NTC_DRIFT, NTC_DRIFT) for rs in (RS * (1 - R_TOL), RS * (1 + R_TOL)))
 
 
 def cholesky(a):
@@ -291,19 +303,16 @@ def modes(caps, cond, srcs):
 def network(p):
     """The whole input network for one set of values p (ohms, farads; ntc None = open). Nodes:
     0 V_T, 1 U1 IN- (from V_T), 2 U2 IN+ (from V_T), 3 U1's tap node, 4 U1 IN+ (after R_F1),
-    5 U2 IN- (the hot tap). Two sources: VREG (through RS, RC1 and RH1) and OUT1 (through
-    RHYS). Returns the rates and each source's (amp, vss), as modes() does."""
+    5 U2 IN- (the hot tap). Every resistor to VREG, OUT1 or AGND is in the diagonal of the
+    conductance matrix. Returns the capacitance and conductance matrices."""
     n = 6
     cond = [[0.0] * n for _ in range(n)]
     caps = [[0.0] * n for _ in range(n)]
-    src = {"vreg": [0.0] * n, "out1": [0.0] * n}
 
-    def r(i, j, ohm):          # resistor between nodes i and j; j a source name, or -1 = AGND
+    def r(i, j, ohm):          # resistor between nodes i and j; j "vreg", "out1" or -1 = AGND
         g = 1 / ohm
         cond[i][i] += g
-        if j in src:
-            src[j][i] += g
-        elif j >= 0:
+        if isinstance(j, int) and j >= 0:
             cond[j][j] += g
             cond[i][j] -= g
             cond[j][i] -= g
@@ -329,145 +338,11 @@ def network(p):
     c(4, -1, p["cf1"])
     r(5, "vreg", p["rh1"])
     r(5, -1, p["rh2"])
-    for node, key in ((1, "cm1n"), (4, "cm1p"), (2, "cm2p"), (5, "cm2n")):
+    for node, key in ((1, "cm1n"), (4, "cm1p"), (2, "cm2p"), (5, "cm2n"), (5, "chot")):
         c(node, -1, p[key])
     c(1, 4, p["dm1"])
     c(2, 5, p["dm2"])
-    return modes(caps, cond, (src["vreg"], src["out1"]))
-
-
-def root(fn, t0, f0, t1, f1):
-    """A root of fn between t0 and t1, where fn changes sign (Illinois method)."""
-    side, t = 0, (t0 + t1) / 2
-    for _ in range(60):
-        if f1 == f0:
-            return t
-        t = (t0 * f1 - t1 * f0) / (f1 - f0)
-        ft = fn(t)
-        if ft == 0.0 or t1 - t0 <= 1e-12 * t1:
-            return t
-        if ft * f1 > 0:
-            t1, f1 = t, ft
-            if side == -1:
-                f0 /= 2
-            side = -1
-        else:
-            t0, f0 = t, ft
-            if side == 1:
-                f1 /= 2
-            side = 1
-    return t
-
-
-def unsafe_error(p, comp):
-    """Worst unsafe error (V) between one comparator's inputs, for one set of values p.
-
-    Each input follows its final value plus the convolution of D(s), its step response less its
-    final value, with each source's slope. The error between a comparator's inputs, beyond their
-    static difference, is the convolution of Delta = D_a - D_b, where a is the input whose lead
-    means "charge": U1's tap (IN+) against V_T (IN-), and V_T (U2's IN+) against U2's tap (IN-).
-    OUT1 high follows VREG, so its slope is VREG's; OUT1 low is constant. So at each moment the
-    kernel is Delta_H (VREG and OUT1 together) or Delta_L (VREG alone), and with the slope in
-    [-R_FALL, R_RISE] the unsafe error, for any history of VREG and of OUT1's state, is at most
-        integral over s of max(g(Delta_H(s)), g(Delta_L(s))),
-        g(x) = R_RISE * max(x, 0) + R_FALL * max(-x, 0).
-    OUT1's own switching step (at most VREG[2]) adds its step response. Within the range between
-    the two states' final values, that is the hysteresis already in the static trips; any
-    overshoot beyond it is the kick, added here. U2's inputs have no DC path from OUT1, so for
-    U2 the whole transient is kick.
-
-    Every kernel is a sum of exponentials, so the integral is exact between the points where a
-    kernel, or the choice between them, changes sign. Those are found on a grid of T_DECADE
-    points a decade and refined; check_integration() compares a dense trapezoid sum.
-
-    Returns (total, rise part, fall part, kick, OUT1 high alone, OUT1 low alone, mean delay of
-    a, mean delay of b); the mean delays (Elmore) are with OUT1 high."""
-    rates, ((av, vv), (ao, vo)) = network(p)
-    a, b = (4, 1) if comp == 1 else (2, 5)
-    n = len(rates)
-    dl = [av[a][k] - av[b][k] for k in range(n)]        # OUT1 low: VREG alone
-    do = [ao[a][k] - ao[b][k] for k in range(n)]        # OUT1's own step
-    dh = [x + y for x, y in zip(dl, do)]                # OUT1 high: both together
-    s_inf = vo[a] - vo[b]
-    s_top, s_bot = max(0.0, s_inf), min(0.0, s_inf)
-    # Sign changes: Delta_H, Delta_L, and the choice between g(Delta_H) and g(Delta_L).
-    sums = [dh, dl, do, [R_RISE * x + R_FALL * y for x, y in zip(dh, dl)],
-            [R_RISE * y + R_FALL * x for x, y in zip(dh, dl)]]
-    slope_o = [-r * c for r, c in zip(rates, do)]       # OUT1 step response's slope
-
-    def value(c, t):
-        return sum(ck * math.exp(-r * t) for ck, r in zip(c, rates))
-
-    t_lo, t_hi = 0.01 / max(rates), 40 / min(rates)
-    steps = int(math.log10(t_hi / t_lo) * T_DECADE) + 1
-    grid = [0.0] + [t_lo * (t_hi / t_lo) ** (i / steps) for i in range(steps + 1)]
-    # Sign changes smaller than rounding noise are skipped: they enclose no area.
-    noise = [1e-12 * sum(abs(x) for x in c) for c in sums + [slope_o]]
-    prev = None
-    breaks, turns = [], []
-    for t in grid:
-        ex = [math.exp(-r * t) for r in rates]
-        h = sum(c * x for c, x in zip(dh, ex))
-        lo = sum(c * x for c, x in zip(dl, ex))
-        cur = (h, lo, h - lo, R_RISE * h + R_FALL * lo, R_RISE * lo + R_FALL * h,
-               sum(c * x for c, x in zip(slope_o, ex)))
-        if prev is not None:
-            for j in range(6):
-                if prev[j] * cur[j] < 0 and max(abs(prev[j]), abs(cur[j])) > noise[j]:
-                    c = sums[j] if j < 5 else slope_o
-                    tr = root(lambda u: value(c, u), t_prev, prev[j], t, cur[j])
-                    (breaks if j < 5 else turns).append(tr)
-        prev, t_prev = cur, t
-    # Exact integrals between the breaks.
-    edges = [0.0] + sorted(breaks) + [math.inf]
-    ex = [[math.exp(-r * t) if t < math.inf else 0.0 for r in rates] for t in edges]
-    tot = [0.0] * 4              # combined rise, combined fall, OUT1 high alone, OUT1 low alone
-    for i in range(len(edges) - 1):
-        x, y = edges[i], edges[i + 1]
-        if x == 0.0:
-            mid = y / 2 if y < math.inf else t_lo
-        else:
-            mid = 2 * x if y == math.inf else math.sqrt(x * y)
-        h, lo = value(dh, mid), value(dl, mid)
-        wh = R_RISE if h > 0 else -R_FALL
-        wl = R_RISE if lo > 0 else -R_FALL
-        area = [sum(c * (e0 - e1) / r for c, e0, e1, r in zip(cv, ex[i], ex[i + 1], rates))
-                for cv in (dh, dl)]
-        ih, il = wh * area[0], wl * area[1]
-        if wh * h >= wl * lo:
-            tot[0 if h > 0 else 1] += ih
-        else:
-            tot[0 if lo > 0 else 1] += il
-        tot[2] += ih
-        tot[3] += il
-    kick = 0.0
-    for t in turns:
-        s = s_inf + value(do, t)
-        kick = max(kick, s - s_top, s_bot - s)
-    kick *= VREG[2]
-    delay = [-sum((av[i][k] + ao[i][k]) / rates[k] for k in range(n)) / (vv[i] + vo[i])
-             for i in (a, b)]
-    return (tot[0] + tot[1] + kick, tot[0], tot[1], kick, tot[2], tot[3], delay[0], delay[1])
-
-
-def check_integration(p, comp, per_decade=600):
-    """The total of unsafe_error() by a dense trapezoid sum over 10 ps to 1 ms instead."""
-    rates, ((av, vv), (ao, vo)) = network(p)
-    a, b = (4, 1) if comp == 1 else (2, 5)
-    n = len(rates)
-    dl = [av[a][k] - av[b][k] for k in range(n)]
-    dh = [dl[k] + ao[a][k] - ao[b][k] for k in range(n)]
-    total, prev, t_prev = 0.0, None, 0.0
-    for t in [0.0] + [10 ** (-11 + i / per_decade) for i in range(8 * per_decade + 1)]:
-        ex = [math.exp(-r * t) for r in rates]
-        g = []
-        for c in (dh, dl):
-            x = sum(ck * e for ck, e in zip(c, ex))
-            g.append(R_RISE * x if x > 0 else -R_FALL * x)
-        if prev is not None:
-            total += (t - t_prev) * (max(g) + prev) / 2
-        prev, t_prev = max(g), t
-    return total
+    return caps, cond
 
 
 def filter_box():
@@ -483,15 +358,16 @@ def filter_box():
             ("rhys", RHYS * 1e3 * (1 - RHYS_TOL), RHYS * 1e3 * (1 + RHYS_TOL)),
             ("rf1", R_F1 * 1e3 * rf[0], R_F1 * 1e3 * rf[1]), ("cf1", C_F1 * cf[0], C_F1 * cf[1]),
             ("cnode",) + C_NODE, ("cm2p",) + C_CM, ("cm2n",) + C_CM, ("dm2",) + C_DM,
-            ("rh1", RH1 * 1e3 * lo, RH1 * 1e3 * hi), ("rh2", RH2 * 1e3 * lo, RH2 * 1e3 * hi))
+            ("rh1", RH1 * 1e3 * lo, RH1 * 1e3 * hi), ("rh2", RH2 * 1e3 * lo, RH2 * 1e3 * hi),
+            ("chot", C_HOT * cf[0], C_HOT * cf[1]))
 
 
 BOX = filter_box()
-# The U1 point the fifth review exhibited (R5-M1), ohms and farads.
+# The U1 point the fifth review exhibited (R5-M1), ohms and farads, with revision 6's C_HOT.
 R5_M1_POINT = dict(rs=11979.0, ct=764e-12, ntc=32166.146873431757, rin1=10100.0, rin2=9900.0,
                    cm1n=10e-12, cm1p=10e-12, dm1=8e-12, rc1=10017.5, rc2=24257.475,
                    rhys=3353200.0, rf1=27270.0, cf1=346.5e-12, cnode=0.5e-12, cm2p=10e-12,
-                   cm2n=1e-12, dm2=0.0, rh1=9982.5, rh2=4012.965)
+                   cm2n=1e-12, dm2=0.0, rh1=9982.5, rh2=4012.965, chot=100e-12)
 
 
 def point(u, ntc):
@@ -501,58 +377,6 @@ def point(u, ntc):
     return p
 
 
-def vertex(bits):
-    return [bits >> j & 1 for j in range(len(BOX))]
-
-
-def ntc_at(f, r_lo, r_hi):
-    return r_lo * (r_hi / r_lo) ** f
-
-
-def _vertex_job(job):
-    """Worker: the N_TOP worst vertices of one block at one NTC value, and the mean delays."""
-    comp, ntc, start, stop = job
-    top, lead, lag = [], [], []
-    for bits in range(start, stop):
-        e = unsafe_error(point(vertex(bits), ntc), comp)
-        top.append((e[0], bits))
-        lead.append(e[6])
-        lag.append(e[7])
-    return heapq.nlargest(N_TOP, top), (min(lead), max(lead)), (min(lag), max(lag))
-
-
-def _point_job(job):
-    comp, u, ntc = job
-    return unsafe_error(point(u, ntc), comp)
-
-
-def _ascent_job(job):
-    """Worker: coordinate ascent from u (and the NTC at fraction f of the band), first over a
-    grid of eighths of each range, then in halving steps around the best point."""
-    comp, u, f, r_lo, r_hi = job
-    x = list(u) + [f]
-
-    def ev(y):
-        return unsafe_error(point(y[:-1], ntc_at(y[-1], r_lo, r_hi)), comp)[0]
-
-    best, grid_done = ev(x), False
-    for step in [None] * 4 + [1 / 16, 1 / 32, 1 / 64, 1 / 128]:
-        if step is None and grid_done:
-            continue
-        improved = False
-        for j in range(len(x)):
-            values = [i / 8 for i in range(9)] if step is None else \
-                [min(1.0, max(0.0, x[j] + s)) for s in (-step, step)]
-            for v in values:
-                y = x[:]
-                y[j] = v
-                e = ev(y)
-                if e > best * (1 + 1e-9):
-                    best, x, improved = e, y, True
-        grid_done = step is None and not improved
-    return best, x
-
-
 def ntc_band(t_lo, t_hi):
     """NTC resistance range (kOhm) over t_lo..t_hi deg C, table spread and drift included."""
     lo = min(r_ntc(t_hi, k) for k in (0, 2)) * (1 - NTC_DRIFT)
@@ -560,98 +384,437 @@ def ntc_band(t_lo, t_hi):
     return lo, hi
 
 
-def filter_check(pool, c_band, h_band, f_cold, f_hot, vfl):
-    """Largest error found between each comparator's inputs while VREG moves, in volts.
+# Interval envelope (revision 6, R6-M1). Each node's Thevenin source is a fixed fraction of VREG
+# (or OUT1): E0 = K0 VREG at V_T (RS and the NTC), E3 = K3L VREG + cO OUT1 at U1's tap node (RC1,
+# RC2, RHYS), E5 = K5 VREG at U2's tap (RH1, RH2). x_i^j is node i's response to a unit step of
+# E_j from rest. Nodes as in network(). Between each comparator's inputs:
+#   U1: IN+ - IN- = (K3 - K0) W1 + Delta1 * dVREG,   W1 = x_1^0 * dVREG,
+#       Delta1 = K3 (x_4^3 - x_1^0) + K0 x_4^0 + K5 x_4^5 - K3 x_1^3 - K5 x_1^5,
+#   U2: IN+ - IN- = (K0 - K5) W2 + Delta2 * dVREG,   W2 = x_2^0 * dVREG,
+#       Delta2 = K5 (x_2^0 - x_5^5) + K3 x_2^3 + K5 x_2^5 - K0 x_5^0 - K3 x_5^3,
+# where * is convolution with VREG's slope and K3 is K3H with OUT1 following VREG. W is VREG
+# lagged by the input's own filter: the static trips are taken at W, and Delta settles to zero,
+# so for any VREG slope history in [-R_FALL, R_RISE] its part is at most
+#   R_RISE * integral of max(Delta, 0) + R_FALL * integral of max(-Delta, 0).
+# OUT1 at any moment is theta VREG, 0 <= theta <= 1 (high: VREG less its drop; low: VOL). Its
+# part of E3 is cO h' * (theta VREG), h = x_a^3 - x_b^3 (a, b the comparator's inputs). Split h'
+# into its positive and negative parts: that is at most the OUT1-high kernel (K3 = K3H, in Delta)
+# plus cO V_TOP integral of max(-h', 0), which any switching sequence can add (R6-M1). h' is the
+# difference of the two inputs' node equations, evaluated over the E3 step's bounds:
+#   U1: h' = C4/det1/R_IN1 y1 + C1/det1/R_F1 (x3 - x4),  U2: h' = -C5/det2/R_IN2 y2 + C2/det2 G5 x5.
+#
+# The node equations, written in V_T (x0), the input currents' coordinates y1 = x1 - x0 and
+# y2 = x2 - x0, and nodes 3, 4, 5, are sums of products of coefficients, each a range over the
+# box (env_coefs), and differences of states. For each state's upper bound, the largest
+# right-hand side with that state at its upper bound and every other state anywhere between its
+# bounds gives one equation; likewise each lower bound. By Mueller's comparison theorem this
+# 12-state system bounds every trajectory of every set of values in the box (each value varying
+# independently, even in time). It is solved exactly for the current choice of extreme
+# coefficients and bounds (a linear system: matrix exponential), halving the step wherever the
+# choice changes; at ENV_H_MIN of a grid step the choice is kept and the bounds are widened by the
+# step times the gap between the kept and the true extreme at the step's end. Integrals take the
+# larger of each grid step's two ends; ENV_DECADE points a decade, checked at twice that.
+ENV_RUNS = (("E0", None), ("E3", None), ("E5", None))
 
-    unsafe_error() bounds the error for one set of values. The values are then searched, each
-    independently over its own range (R5-M1):
-      1. every vertex of the 18-value box (2^18) at the NTC values of the band's two ends and
-         its middle;
-      2. the N_TOP worst vertices at N_NTC NTC values across the band;
-      3. N_ASCENT local ascents into the interior, NTC included, from the worst points so far;
-      4. N_RANDOM random points of the box and band (fixed seeds).
-    This is a search: it doesn't prove that nothing larger exists. So the trips carry
-    FILTER_ALLOWANCE times the largest error found (err); main() checks that the shift stays
-    inside BAND_K.
 
-    The band is each trip band (c_band, h_band, deg C) widened by BAND_K. Beyond it, on the side
-    where the comparator says "do not charge", the static distance from its trip must exceed
-    the allowed error: checked in 5 % steps of NTC resistance over a factor of 3, and at open
-    (U1) or nearly shorted (U2), for the N_TOP worst vertices; at the last of these, every
-    vertex."""
-    n_box = 2 ** len(BOX)
-    blocks = 64
-    size = n_box // blocks
-    out = {}
-    for comp, band, f_tap in ((1, c_band, f_cold), (2, h_band, f_hot)):
+def env_coefs(g_lo, g_hi):
+    """Range of each coefficient over the box, NTC conductance g_lo..g_hi (0 = open). Each is
+    monotone in each value it depends on, so its range is at the vertices (env_check tests
+    interior points)."""
+    r = {name: (lo, hi) for name, lo, hi in BOX}
+    r["g"] = (g_lo, g_hi)
+    r["c4"] = (r["cf1"][0] + r["cm1p"][0], r["cf1"][1] + r["cm1p"][1])
+    r["c5"] = (r["cm2n"][0] + r["chot"][0], r["cm2n"][1] + r["chot"][1])
+    return {name: _coef_range(r, fn, names) for name, (fn, names) in ENV_COEFS.items()}
+
+
+def _coef_range(r, fn, names):
+    vals = [fn(*v) for v in itertools.product(*(r[n] for n in names))]
+    return min(vals), max(vals)
+
+
+def _det(c, d, cc):
+    """Determinant of two nodes' capacitance matrix: c and cc to AGND, d between them."""
+    return c * cc + d * (c + cc)
+
+
+# Nodes 1 and 4 (and 2 and 5) are coupled by the comparator's differential capacitance, so each
+# node's slope is a mix of both nodes' currents: the inverse of their capacitance matrix.
+ENV_COEFS = {
+    "a1g1": (lambda c, d, cc, r: (cc + d) / _det(c, d, cc) / r, ("cm1n", "dm1", "c4", "rin1")),
+    "b1g4": (lambda c, d, cc, r: d / _det(c, d, cc) / r, ("cm1n", "dm1", "c4", "rf1")),
+    "b1g1": (lambda c, d, cc, r: d / _det(c, d, cc) / r, ("cm1n", "dm1", "c4", "rin1")),
+    "c1g4": (lambda c, d, cc, r: (c + d) / _det(c, d, cc) / r, ("cm1n", "dm1", "c4", "rf1")),
+    "a2g2": (lambda c, d, cc, r: (cc + d) / _det(c, d, cc) / r, ("cm2p", "dm2", "c5", "rin2")),
+    "b2g5": (lambda c, d, cc, r1, r2: d / _det(c, d, cc) * (1 / r1 + 1 / r2),
+             ("cm2p", "dm2", "c5", "rh1", "rh2")),
+    "b2g2": (lambda c, d, cc, r: d / _det(c, d, cc) / r, ("cm2p", "dm2", "c5", "rin2")),
+    "c2g5": (lambda c, d, cc, r1, r2: (c + d) / _det(c, d, cc) * (1 / r1 + 1 / r2),
+             ("cm2p", "dm2", "c5", "rh1", "rh2")),
+    "iC0": (lambda ct: 1 / ct, ("ct",)),
+    "ic3": (lambda cn: 1 / cn, ("cnode",)),
+    "gth0": (lambda rs, g: 1 / rs + g, ("rs", "g")),
+    "g1": (lambda r: 1 / r, ("rin1",)),
+    "g2": (lambda r: 1 / r, ("rin2",)),
+    "g4": (lambda r: 1 / r, ("rf1",)),
+    "gth3": (lambda r1, r2, rh: 1 / r1 + 1 / r2 + 1 / rh, ("rc1", "rc2", "rhys")),
+    "one": (lambda: 1.0, ()),
+    "K0": (lambda rs, g: 1 / (1 + rs * g), ("rs", "g")),
+    "K3L": (lambda r1, r2, rh: 1 / r1 / (1 / r1 + 1 / r2 + 1 / rh), ("rc1", "rc2", "rhys")),
+    "K3H": (lambda r1, r2, rh: (1 / r1 + 1 / rh) / (1 / r1 + 1 / r2 + 1 / rh), ("rc1", "rc2", "rhys")),
+    "cO": (lambda r1, r2, rh: 1 / rh / (1 / r1 + 1 / r2 + 1 / rh), ("rc1", "rc2", "rhys")),
+    "K5": (lambda r1, r2: r2 / (r1 + r2), ("rh1", "rh2")),
+    "e1": (lambda c, d, cc, r: cc / _det(c, d, cc) / r, ("cm1n", "dm1", "c4", "rin1")),
+    "e2": (lambda c, d, cc, r: c / _det(c, d, cc) / r, ("cm1n", "dm1", "c4", "rf1")),
+    "e3": (lambda c, d, cc, r: cc / _det(c, d, cc) / r, ("cm2p", "dm2", "c5", "rin2")),
+    "e4": (lambda c, d, cc, r1, r2: c / _det(c, d, cc) * (1 / r1 + 1 / r2),
+           ("cm2p", "dm2", "c5", "rh1", "rh2")),
+}
+
+# Right-hand side of each state: groups (sign, factor, terms), each term (sign, coefficient,
+# linear form over the states 0-5 and the sources).
+_NODE0 = [(+1, "gth0", {"E0": 1, 0: -1}), (+1, "g1", {1: 1}), (+1, "g2", {2: 1})]
+ENV_RHS = {
+    0: [(+1, "iC0", _NODE0)],
+    1: [(+1, "one", [(-1, "a1g1", {1: 1}), (+1, "b1g4", {3: 1, 4: -1})]), (-1, "iC0", _NODE0)],
+    2: [(+1, "one", [(-1, "a2g2", {2: 1}), (+1, "b2g5", {"E5": 1, 5: -1})]), (-1, "iC0", _NODE0)],
+    3: [(+1, "ic3", [(+1, "gth3", {"E3": 1, 3: -1}), (-1, "g4", {3: 1, 4: -1})])],
+    4: [(+1, "one", [(-1, "b1g1", {1: 1}), (+1, "c1g4", {3: 1, 4: -1})])],
+    5: [(+1, "one", [(-1, "b2g2", {2: 1}), (+1, "c2g5", {"E5": 1, 5: -1})])],
+}
+ENV_ORDER = [(False, i) for i in range(6)] + [(True, i) for i in range(6)]
+
+
+def _form_extreme(i, own_up, form, want_max, z, e):
+    """Largest (or smallest) value of a linear form, state i at its own upper (or lower) bound,
+    the others anywhere between theirs. Returns it and the bounds used: {(state, upper): coef}."""
+    v, used = 0.0, {}
+    for k, a in form.items():
+        if isinstance(k, str):
+            v += a * e[k]
+            continue
+        up = own_up if k == i else (a > 0) == want_max
+        v += a * z[k + 6 if up else k]
+        used[(k, up)] = used.get((k, up), 0.0) + a
+    return v, used
+
+
+def rhs_ext(c, i, up, z, e, keep=None):
+    """Upper (up) or lower extreme of state i's right-hand side over the box and the other states'
+    bounds z (lower 0-5, upper 6-11). keep fixes the choice of extreme coefficients. Returns the
+    value, the affine form ({(state, upper): coef}, constant) and the choice."""
+    total, row, const, flags = 0.0, {}, 0.0, []
+    for gi, (gsign, fname, terms) in enumerate(ENV_RHS[i]):
+        want = (gsign > 0) == up             # the inner sum's upper extreme is needed
+        parts, s = [], 0.0
+        for ti, (tsign, cname, form) in enumerate(terms):
+            need_max = (tsign > 0) == want
+            v, used = _form_extreme(i, up, form, need_max, z, e)
+            pos = v >= 0 if keep is None else keep[gi][0][ti]
+            lo_c, hi_c = c[cname]
+            coef = tsign * ((hi_c if pos else lo_c) if need_max else (lo_c if pos else hi_c))
+            parts.append((pos, coef, used, form))
+            s += coef * v
+        spos = s >= 0 if keep is None else keep[gi][1]
+        lo_f, hi_f = c[fname]
+        f = gsign * ((hi_f if spos else lo_f) if want else (lo_f if spos else hi_f))
+        flags.append((tuple(p[0] for p in parts), spos))
+        for _, coef, used, form in parts:
+            for k, a in used.items():
+                row[k] = row.get(k, 0.0) + f * coef * a
+            const += sum(f * coef * a * e[k] for k, a in form.items() if isinstance(k, str))
+        total += f * s
+    return total, (row, const), tuple(flags)
+
+
+def _choice(c, z, e):
+    return tuple(rhs_ext(c, i, up, z, e)[2] for up, i in ENV_ORDER)
+
+
+def _linear(c, keep, e):
+    """The 12-state linear system for one choice of extremes."""
+    a = [[0.0] * 12 for _ in range(12)]
+    b = [0.0] * 12
+    for idx, (up, i) in enumerate(ENV_ORDER):
+        _, (row, const), _ = rhs_ext(c, i, up, [0.0] * 12, e, keep[idx])
+        for (k, kup), v in row.items():
+            a[idx][k + 6 if kup else k] += v
+        b[idx] = const
+    return a, b
+
+
+def _matmul(x, y):
+    cols = list(zip(*y))
+    return [[sum(p * q for p, q in zip(r, col)) for col in cols] for r in x]
+
+
+def _expm_affine(a, b, h):
+    """exp(a h) and the response to the constant b over h: the exponential of the augmented
+    matrix, by scaling, a 20-term Taylor series and squaring."""
+    n = len(a)
+    m = [[x * h for x in row] + [bi * h] for row, bi in zip(a, b)] + [[0.0] * (n + 1)]
+    norm = max(sum(abs(x) for x in row) for row in m)
+    s = max(0, int(math.ceil(math.log2(norm))) + 1) if norm > 0.5 else 0
+    m = [[x * 2.0 ** -s for x in row] for row in m]
+    ex = [[float(i == j) for j in range(n + 1)] for i in range(n + 1)]
+    term = [row[:] for row in ex]
+    for k in range(1, 20):
+        term = [[x / k for x in row] for row in _matmul(term, m)]
+        ex = [[p + q for p, q in zip(r, t)] for r, t in zip(ex, term)]
+    for _ in range(s):
+        ex = _matmul(ex, ex)
+    return [row[:n] for row in ex[:n]], [ex[i][n] for i in range(n)]
+
+
+def envelope(c, src, init, per_decade):
+    """Bounds of the six states for a unit step of source src (E0, E3, E5) from rest, or from the
+    state init with no source. Returns the grid, the bounds at each grid point (lower 0-5, upper
+    6-11), how often a change of choice was kept, and the largest widening that added."""
+    e = {"E0": 0.0, "E3": 0.0, "E5": 0.0}
+    if init is None:
+        e[src] = 1.0
+        init = (0.0,) * 6
+    t0, t1 = ENV_T
+    n = int(round(per_decade * math.log10(t1 / t0)))
+    grid = [0.0] + [t0 * (t1 / t0) ** (k / n) for k in range(n + 1)]
+    z = [float(x) for x in init] * 2
+    out, cache, kept, widened = [z[:]], {}, 0, 0.0
+    keep = _choice(c, z, e)
+    for k in range(1, len(grid)):
+        span = grid[k] - grid[k - 1]
+        left = [span]
+        while left:
+            h = left.pop(0)
+            if (keep, h) not in cache:
+                cache[(keep, h)] = _expm_affine(*_linear(c, keep, e), h)
+            phi, gam = cache[(keep, h)]
+            zn = [sum(p * x for p, x in zip(row, z)) + g for row, g in zip(phi, gam)]
+            nxt = _choice(c, zn, e)
+            if nxt != keep:
+                if h > ENV_H_MIN * span:
+                    left = [h / 2, h / 2] + left
+                    continue
+                kept += 1
+                for idx, (up, i) in enumerate(ENV_ORDER):
+                    gap = rhs_ext(c, i, up, zn, e)[0] - rhs_ext(c, i, up, zn, e, keep[idx])[0]
+                    gap = h * max(0.0, gap if up else -gap)
+                    zn[idx] += gap if up else -gap
+                    widened = max(widened, gap)
+                nxt = _choice(c, zn, e)
+            z, keep = zn, nxt
+        out.append(z[:])
+    return grid, out, kept, widened
+
+
+def _env_job(job):
+    key, g_lo, g_hi, src, init, per_decade = job
+    return key, envelope(env_coefs(g_lo, g_hi), src, init, per_decade)
+
+
+def _nodes(z):
+    """Node voltage bounds (lower, upper) from the states: x1 = x0 + y1, x2 = x0 + y2."""
+    return ([z[0], z[0] + z[1], z[0] + z[2], z[3], z[4], z[5]],
+            [z[6], z[6] + z[7], z[6] + z[8], z[9], z[10], z[11]])
+
+
+def _times(k, f):
+    """Range of k * f, k a positive range, f = (lo, hi)."""
+    return (k[0] * f[0] if f[0] >= 0 else k[1] * f[0]), (k[1] * f[1] if f[1] >= 0 else k[0] * f[1])
+
+
+def _ends(grid, vals):
+    """Integral of max(v, 0), taking the larger of each grid step's two ends."""
+    return sum((t1 - t0) * max(0.0, v0, v1) for t0, t1, v0, v1 in zip(grid, grid[1:], vals, vals[1:]))
+
+
+def kernel_bound(comp, c, runs):
+    """The bound for one comparator and one coefficient set, from the envelopes of runs (E0, E3
+    and E5 steps). Returns the rise and fall parts, the OUT1 switching excess, their total (V),
+    the lag of the input from V_T (how far W can fall below and rise above VREG, V) and the
+    widest bound at the end."""
+    grid = runs["E0"][0]
+    xs = {j: [_nodes(z) for z in runs[j][1]] for j in runs}
+    k3 = (c["K3L"][0], c["K3H"][1])
+    w = 1 if comp == 1 else 2
+    d_lo, d_hi, h_lo, lag = [], [], [], ([], [])
+    for n in range(len(grid)):
+        def x(j, i):
+            return xs[j][n][0][i], xs[j][n][1][i]
+        if comp == 1:
+            terms = [_times(k3, (x("E3", 4)[0] - x("E0", 1)[1], x("E3", 4)[1] - x("E0", 1)[0])),
+                     _times(c["K0"], x("E0", 4)), _times(c["K5"], x("E5", 4)),
+                     _times(k3, x("E3", 1)), _times(c["K5"], x("E5", 1))]
+            sign = (1, 1, 1, -1, -1)
+        else:
+            terms = [_times(c["K5"], (x("E0", 2)[0] - x("E5", 5)[1], x("E0", 2)[1] - x("E5", 5)[0])),
+                     _times(k3, x("E3", 2)), _times(c["K5"], x("E5", 2)),
+                     _times(c["K0"], x("E0", 5)), _times(k3, x("E3", 5))]
+            sign = (1, 1, 1, -1, -1)
+        d_lo.append(sum(t[0] if s > 0 else -t[1] for t, s in zip(terms, sign)))
+        d_hi.append(sum(t[1] if s > 0 else -t[0] for t, s in zip(terms, sign)))
+        z = runs["E3"][1][n]
+        if comp == 1:            # e1 y1 + e2 (x3 - x4)
+            h_lo.append(_times(c["e1"], (z[1], z[7]))[0]
+                        + _times(c["e2"], (z[3] - z[10], z[9] - z[4]))[0])
+        else:                    # -e3 y2 + e4 x5
+            h_lo.append(-_times(c["e3"], (z[2], z[8]))[1] + _times(c["e4"], (z[5], z[11]))[0])
+        lag[0].append(1 - x("E0", w)[0])
+        lag[1].append(x("E0", w)[1] - 1)
+    rise = R_RISE * _ends(grid, d_hi)
+    fall = R_FALL * _ends(grid, [-v for v in d_lo])
+    kick = c["cO"][1] * V_TOP * _ends(grid, [-v for v in h_lo])
+    behind, ahead = _ends(grid, lag[0]), _ends(grid, lag[1])
+    end = max(max(z[6 + i] - z[i] for i in range(6)) for z in (runs[j][1][-1] for j in runs))
+    return dict(rise=rise, fall=fall, kick=kick, total=rise + fall + kick,
+                below=R_RISE * behind + R_FALL * ahead, above=R_FALL * behind + R_RISE * ahead,
+                end=end, d=(d_lo, d_hi), grid=grid)
+
+
+def filter_bound(pool, c_band, h_band, f_cold, f_hot, vfl):
+    """The filter error bound (V) for each comparator over its trip band (deg C, widened by
+    BAND_K), the lagged rail's range, and the margins beyond the band.
+
+    The band's envelopes are solved at ENV_DECADE and twice that, and the larger bound is kept.
+    Beyond the band, on the side where the comparator says "do not charge", the NTC range is cut
+    into pieces, each with its own envelope: the static distance from the trip at the piece's
+    nearest end, at the lagged rail's lowest value for that piece, must exceed the piece's bound.
+    The trips themselves use the lagged rail over the band."""
+    sets = {}
+    for comp, band in ((1, c_band), (2, h_band)):
         r_lo, r_hi = (x * 1e3 for x in ntc_band(band[0] - BAND_K, band[1] + BAND_K))
-        # 1. Every vertex at three NTC values.
-        jobs = [(comp, ntc_at(f, r_lo, r_hi), i * size, (i + 1) * size)
-                for f in (0.0, 0.5, 1.0) for i in range(blocks)]
-        worst, lead, lag = {}, [], []
-        for (top, ld, lg), job in zip(pool.map(_vertex_job, jobs), jobs):
-            lead += ld
-            lag += lg
-            for e, bits in top:
-                if e > worst.get(bits, (0.0,))[0]:
-                    worst[bits] = (e, job[1])
-        top = heapq.nlargest(N_TOP, ((e, bits) for bits, (e, _) in worst.items()))
-        vertex_max = top[0][0]
-        # 2. The worst vertices across the band.
-        fr = [i / (N_NTC - 1) for i in range(N_NTC)]
-        cand = [(bits, f) for _, bits in top for f in fr]
-        res = pool.map(_point_job, [(comp, vertex(bits), ntc_at(f, r_lo, r_hi)) for bits, f in cand], 16)
-        found = [(e[0], bits, f) for e, (bits, f) in zip(res, cand)]
-        ntc_max = max(found)[0]
-        # 3. Local ascents from the worst distinct vertices.
-        starts, seen = [], set()
-        for e, bits, f in sorted(found, reverse=True):
-            if bits not in seen:
-                seen.add(bits)
-                starts.append((comp, vertex(bits), f, r_lo, r_hi))
-            if len(starts) == N_ASCENT:
-                break
-        ascents = pool.map(_ascent_job, starts, 1)
-        ascent_max, ascent_x = max(ascents)
-        # 4. Random points.
-        jobs = []
-        for i in range(N_RANDOM):
-            rng = random.Random(i)
-            u = [rng.random() for _ in BOX]
-            jobs.append((comp, u, ntc_at(rng.random(), r_lo, r_hi)))
-        random_max = max(e[0] for e in pool.map(_point_job, jobs, 50))
-        best = max(vertex_max, ntc_max, ascent_max, random_max)
-        detail = _point_job((comp, ascent_x[:-1], ntc_at(ascent_x[-1], r_lo, r_hi)))
-        err = FILTER_ALLOWANCE * best
-
-        # Beyond the band: static distance from the trip, at the falling floor, against the
-        # allowed error.
-        outside = [r_hi * 1.05 ** k for k in range(1, 24)] + [None] if comp == 1 else \
-            [r_lo * 0.95 ** k for k in range(1, 24)] + [r_lo * 0.1, r_lo * 0.03]
-        jobs = [(comp, vertex(bits), ntc) for ntc in outside for _, bits in top]
-        errs = [e[0] for e in pool.map(_point_job, jobs, 16)]
-        far = [(comp, outside[-1], i * size, (i + 1) * size) for i in range(blocks)]
-        far_max = max(t[0][0][0] for t in pool.map(_vertex_job, far))
-        least, ratio = None, None
-        for i, ntc in enumerate(outside):
-            e = max(errs[i * len(top):(i + 1) * len(top)])
-            if i == len(outside) - 1:
-                e = max(e, far_max)
-            if comp == 1:
-                f_t = 1.0 if ntc is None else ntc / (RS * 1e3 * (1 + R_TOL) + ntc)
-                dist = (f_t - f_tap) * vfl
-            else:
-                f_t = ntc / (RS * 1e3 * (1 - R_TOL) + ntc)
-                dist = (f_tap - f_t) * vfl
-            dist -= VOS_MAX + VHYS[2] / 2
-            margin = dist - FILTER_ALLOWANCE * e
+        sets[(comp, "band")] = (1 / r_hi, 1 / r_lo, (ENV_DECADE, 2 * ENV_DECADE), (r_lo, r_hi))
+        cuts = ENV_BEYOND[comp]
+        for f0, f1 in zip(cuts, cuts[1:]):
+            if comp == 1:            # colder, toward open: NTC r_hi f0 .. r_hi f1
+                sets[(comp, f0)] = (0.0 if f1 is None else 1 / (r_hi * f1), 1 / (r_hi * f0),
+                                    (ENV_DECADE_BEYOND,), (r_hi * f0, r_hi * f1 if f1 else None))
+            else:                    # hotter, toward a short: NTC r_lo f1 .. r_lo f0
+                sets[(comp, f0)] = (1 / (r_lo * f0), 1 / (r_lo * f1), (ENV_DECADE_BEYOND,),
+                                    (r_lo * f1, r_lo * f0))
+    jobs = [((key, pd, run), g_lo, g_hi, run, init, pd)
+            for key, (g_lo, g_hi, pds, _) in sets.items() for pd in pds for run, init in ENV_RUNS]
+    runs, stats = {}, {}
+    for (key, pd, run), res in pool.imap_unordered(_env_job, jobs):
+        runs.setdefault((key, pd), {})[run] = res
+        old = stats.get(key, (0, 0.0))
+        stats[key] = (old[0] + res[2], max(old[1], res[3]))
+    out = {}
+    for comp, f_tap in ((1, f_cold), (2, f_hot)):
+        g_lo, g_hi, pds, ntc = sets[(comp, "band")]
+        c = env_coefs(g_lo, g_hi)
+        res = {pd: kernel_bound(comp, c, runs[((comp, "band"), pd)]) for pd in pds}
+        best = max(res.values(), key=lambda r: r["total"])
+        pieces = []
+        for key in sets:
+            if key[0] == comp and key[1] != "band":
+                g0, g1, (pd,), span = sets[key]
+                pieces.append((span, env_coefs(g0, g1), kernel_bound(comp, env_coefs(g0, g1),
+                                                                     runs[(key, pd)])))
+        out[comp] = dict(err=best["total"], best=best, steps=res, band=(ntc[0] / 1e3, ntc[1] / 1e3),
+                         pieces=pieces, kept=sum(stats[k][0] for k in stats if k[0] == comp),
+                         widened=max(stats[k][1] for k in stats if k[0] == comp), f_tap=f_tap,
+                         coefs=c, runs=runs[((comp, "band"), ENV_DECADE)])
+    below = max(o["best"]["below"] for o in out.values())
+    above = max(o["best"]["above"] for o in out.values())
+    w_lo, w_hi = vfl - below, VREG[2] + above
+    for comp, o in out.items():
+        least = None
+        for (n0, n1), _, r in o["pieces"]:
+            w_piece = vfl - r["below"]
+            if comp == 1:            # nearest end n0, RS highest, the highest cold tap
+                dist = (n0 / (RS * 1e3 * (1 + R_TOL) + n0) - o["f_tap"]) * w_piece
+            else:                    # nearest end n1, RS lowest, the lowest hot tap
+                dist = (o["f_tap"] - n1 / (RS * 1e3 * (1 - R_TOL) + n1)) * w_piece
+            margin = dist - VOS_MAX - VHYS[2] / 2 - r["total"]
             least = margin if least is None else min(least, margin)
-            ratio = dist / e if ratio is None else min(ratio, dist / e)
-        out[comp] = dict(err=err, best=best, vertex=vertex_max, ntc=ntc_max, ascent=ascent_max,
-                         random=random_max, detail=detail, x=ascent_x, n=3 * n_box,
-                         band=(r_lo / 1e3, r_hi / 1e3), lead=(min(lead), max(lead)),
-                         lag=(min(lag), max(lag)), least=least, ratio=ratio, far=far_max)
-    return out
+        o["least"] = least
+    return dict(u=out, w=(w_lo, w_hi), lag=(below, above))
+
+
+def network_steps(p):
+    """Exact node responses at one set of values p to unit steps of E0, E3 and E5 (modes())."""
+    caps, cond = network(p)
+    g0 = 1 / p["rs"] + (0.0 if p["ntc"] is None else 1 / p["ntc"])
+    g3 = 1 / p["rc1"] + 1 / p["rc2"] + 1 / p["rhys"]
+    g5 = 1 / p["rh1"] + 1 / p["rh2"]
+    srcs = [[g if i == node else 0.0 for i in range(6)] for node, g in ((0, g0), (3, g3), (5, g5))]
+    return modes(caps, cond, srcs)
+
+
+def _check_job(job):
+    """Worker: one set of values against the band's envelopes. Returns the largest excursion of an
+    exact node response outside its bounds (V, 0 when inside), and the exact rise + fall and OUT1
+    excess of that point against the bounds, both with the same integration rule."""
+    comp, p, grid, bounds, d_env = job
+    rates, resp = network_steps(p)
+
+    def x(j, i, t):
+        amp, vss = resp[j]
+        return vss[i] + sum(a * math.exp(-r * t) for a, r in zip(amp[i], rates))
+
+    def slope(j, i, t):
+        amp, _ = resp[j]
+        return sum(-a * r * math.exp(-r * t) for a, r in zip(amp[i], rates))
+
+    out = 0.0
+    for n, t in enumerate(grid):
+        for j, name in enumerate(("E0", "E3", "E5")):
+            lo, hi = bounds[name][n]
+            for i in range(6):
+                v = x(j, i, t)
+                out = max(out, lo[i] - v, v - hi[i])
+    k0 = 1 / (1 + p["rs"] * (0.0 if p["ntc"] is None else 1 / p["ntc"]))
+    g3 = 1 / p["rc1"] + 1 / p["rc2"] + 1 / p["rhys"]
+    k3, co, k5 = (1 / p["rc1"] + 1 / p["rhys"]) / g3, 1 / p["rhys"] / g3, p["rh2"] / (p["rh1"] + p["rh2"])
+    d, hd = [], []
+    for t in grid:
+        if comp == 1:
+            d.append(k3 * (x(1, 4, t) - x(0, 1, t)) + k0 * x(0, 4, t) + k5 * x(2, 4, t)
+                     - k3 * x(1, 1, t) - k5 * x(2, 1, t))
+            hd.append(slope(1, 4, t) - slope(1, 1, t))
+        else:
+            d.append(k5 * (x(0, 2, t) - x(2, 5, t)) + k3 * x(1, 2, t) + k5 * x(2, 2, t)
+                     - k0 * x(0, 5, t) - k3 * x(1, 5, t))
+            hd.append(slope(1, 2, t) - slope(1, 5, t))
+        lo, hi = d_env[0][len(d) - 1], d_env[1][len(d) - 1]
+        out = max(out, lo - d[-1], d[-1] - hi)
+    exact = R_RISE * _ends(grid, d) + R_FALL * _ends(grid, [-v for v in d])
+    kick = co * V_TOP * _ends(grid, [-v for v in hd])
+    return out, exact, kick
+
+
+def env_check(pool, flt, n_points=ENV_POINTS):
+    """Validation, not part of the bound: exact responses at sample points of the band (fixed
+    seeds: random vertices, random interior points, and R5-M1's point for U1) must stay inside the
+    envelopes, and their own rise + fall must stay below the bound. Also checks each coefficient
+    at random interior points against its range. Returns, per comparator, the largest excursion
+    outside the envelopes (V), and the largest exact error and OUT1 excess found."""
+    res = {}
+    for comp, o in flt["u"].items():
+        r_lo, r_hi = (x * 1e3 for x in o["band"])
+        best = o["steps"][ENV_DECADE]
+        runs = o["runs"]
+        bounds = {j: [_nodes(z) for z in runs[j][1]] for j in ("E0", "E3", "E5")}
+        pts = []
+        for i in range(n_points):
+            rng = random.Random(1000 * comp + i)
+            u = [float(rng.random() < 0.5) for _ in BOX] if i % 2 else [rng.random() for _ in BOX]
+            pts.append(point(u, r_lo * (r_hi / r_lo) ** rng.random()))
+        if comp == 1:
+            pts.append(dict(R5_M1_POINT))
+        jobs = [(comp, p, best["grid"], bounds, best["d"]) for p in pts]
+        got = pool.map(_check_job, jobs, 4)
+        for i in range(200):
+            rng = random.Random(i)
+            p = {name: lo + rng.random() * (hi - lo) for name, lo, hi in BOX}
+            g = 1 / (r_lo * (r_hi / r_lo) ** rng.random())
+            vals = dict(p, g=g, c4=p["cf1"] + p["cm1p"], c5=p["cm2n"] + p["chot"])
+            for name, (fn, names) in ENV_COEFS.items():
+                v = fn(*(vals[n] for n in names))
+                lo, hi = o["coefs"][name]
+                assert lo * (1 - 1e-12) <= v <= hi * (1 + 1e-12), name
+        res[comp] = (max(g[0] for g in got), max(g[1] for g in got), max(g[2] for g in got), len(pts))
+    return res
 
 
 def rev3_check():
@@ -742,54 +905,63 @@ def main():
     c_trip = (min(fall["c_off"]), max(fall["c_on"]))
     h_trip = (min(fall["h_on"]), max(fall["h_off"]))
 
-    # The fraction of VREG at each comparator's inputs near its trip, highest corner.
+    # The fraction of VREG at each tap closest to "charge": U1's highest, U2's lowest.
     f_cold = RC2 * (1 + R_TOL) / (RC2 * (1 + R_TOL) + par(RC1 * (1 - R_TOL), RHYS * (1 - RHYS_TOL)))
-    f_hot = RH2 * (1 + R_TOL) / (RH2 * (1 + R_TOL) + RH1 * (1 - R_TOL))
+    f_hot = RH2 * (1 - R_TOL) / (RH2 * (1 - R_TOL) + RH1 * (1 + R_TOL))
     with multiprocessing.Pool() as pool:
-        flt = filter_check(pool, c_trip, h_trip, f_cold, f_hot, vfl)
-    err_c_k = flt[1]["err"] / (vfl * slope_per_k(c_trip))
-    err_h_k = flt[2]["err"] / (vfl * slope_per_k(h_trip))
+        flt = filter_bound(pool, c_trip, h_trip, f_cold, f_hot, vfl)
+        chk = env_check(pool, flt)
+    # The static trips at the lagged rail W (R6-M1): the falling floor less the inputs' lag.
+    w_lo, w_hi = flt["w"]
+    cold, hot = corners(w_lo, w_hi)
+    lagd = dict(c_off=[c[0] for c in cold], c_on=[c[1] for c in cold], h_off=[h[0] for h in hot],
+                h_on=[h[1] for h in hot])
+    err_c_k = flt["u"][1]["err"] / (w_lo * slope_per_k(c_trip))
+    err_h_k = flt["u"][2]["err"] / (w_lo * slope_per_k(h_trip))
     th_c = [par(RS, r_ntc(t, k) * (1 + d)) for t in c_trip for k in (0, 2)
             for d in (-NTC_DRIFT, NTC_DRIFT)]
     leak_v = LEAK_A * max(th_c) * 1e3
-    leak_k = {v: leak_v / (v * slope_per_k(c_trip)) for v in (VREG_STATIC, vfl)}
+    leak_k = {v: leak_v / (v * slope_per_k(c_trip)) for v in (VREG_STATIC, w_lo)}
+    sc_c = NTC_SELF_HEAT_K + GRADIENT_K + leak_k[w_lo]
+    sc_s = NTC_SELF_HEAT_K + GRADIENT_K + leak_k[VREG_STATIC]
+    safe_c = min(lagd["c_off"]) - sc_c - err_c_k
+    safe_h = max(lagd["h_off"]) + GRADIENT_K + err_h_k
 
-    # NTC self-heating at the cold trip: P = I^2 R, divided by 2 mW/K (still air, datasheet).
+    # NTC self-heating at the cold trip: P = I^2 R at V_TOP, divided by 2 mW/K (still air,
+    # datasheet). It scales as VREG squared (R6-N2).
     r1 = r_ntc(nom_c[0], 1)
-    i_ma = 3.4 / (RS + r1)
+    i_ma = V_TOP / (RS + r1)
     p_mw = i_ma ** 2 * r1
     print(f"Resistors: RS {RS} k, RC1 {RC1} k, RC2 {RC2} k, RHYS {RHYS / 1000:.2f} M, "
           f"RH1 {RH1} k, RH2 {RH2} k; tolerance +-{R_TOL * 100:.3f} % (RHYS +-{RHYS_TOL * 100:.0f} %)")
-    print(f"NTC current at the cold trip: {i_ma * 1000:.0f} uA, {p_mw:.3f} mW -> "
+    print(f"NTC current at the cold trip, VREG {V_TOP} V: {i_ma * 1000:.0f} uA, {p_mw:.3f} mW -> "
           f"self-heating {p_mw / 2:.3f} K in still air (allowance {NTC_SELF_HEAT_K} K)")
     print()
     tp, tg = inhibit_latency()
     print(f"VREG bands: regulated {VREG[0]}-{VREG[2]} V; U4 static {VREG_STATIC:.3f}-{VREG[2]} V "
-          f"(lowest VIT-); falling floor {vfl:.4f}-{VREG[2]} V")
+          f"(lowest VIT-); falling floor {vfl:.4f}-{VREG[2]} V; never above V_TOP {V_TOP} V (R6-N2)")
     print(f"  Floor: 10 % below the lowest VIT- ({0.9 * U4_VIT[0]:.4f} V), less {R_FALL:.0f} V/s for "
           f"U4's {tp * 1e6:.0f} us detect delay and {tg * 1e6:.1f} us for Q9 / Q10's gate to fall "
           f"to {VGS_OFF} V")
+    print(f"  Lagged rail at the comparator inputs: W {w_lo:.4f}-{w_hi:.4f} V (the floor less "
+          f"{flt['lag'][0] * 1000:.1f} mV, the top plus {flt['lag'][1] * 1000:.2f} mV: the inputs' lag "
+          f"behind VREG at the steepest slopes)")
     print()
     print("| Trip | Nominal, deg C | Electrical worst case, VREG regulated | VREG down to U4's threshold "
-          "| Safety corner, VREG at the falling floor, plus the filter error |")
+          "| Safety corner: lagged rail at the falling floor, plus the filter bound |")
     print("|---|---|---|---|---|")
-    sc_c = NTC_SELF_HEAT_K + GRADIENT_K + leak_k[vfl]
-    sc_s = NTC_SELF_HEAT_K + GRADIENT_K + leak_k[VREG_STATIC]
     print(f"| Cold off (cooling) | {nom_c[0]:+.2f} | {min(reg['c_off']):+.2f} to {max(reg['c_off']):+.2f} | "
-          f"{min(st['c_off']):+.2f} to {max(st['c_off']):+.2f} | "
-          f"{min(fall['c_off']) - sc_c - err_c_k:+.2f} (must be >= 0) |")
+          f"{min(st['c_off']):+.2f} to {max(st['c_off']):+.2f} | {safe_c:+.2f} (must be >= 0) |")
     print(f"| Cold on (warming) | {nom_c[1]:+.2f} | {min(reg['c_on']):+.2f} to {max(reg['c_on']):+.2f} | "
           f"{min(st['c_on']):+.2f} to {max(st['c_on']):+.2f} | "
-          f"{min(fall['c_on']) - sc_c - err_c_k:+.2f} |")
+          f"{min(lagd['c_on']) - sc_c - err_c_k:+.2f} |")
     print(f"| Hot off (heating) | {nom_h[0]:+.2f} | {min(reg['h_off']):+.2f} to {max(reg['h_off']):+.2f} | "
-          f"{min(st['h_off']):+.2f} to {max(st['h_off']):+.2f} | "
-          f"{max(fall['h_off']) + GRADIENT_K + err_h_k:+.2f} (must be <= 45) |")
+          f"{min(st['h_off']):+.2f} to {max(st['h_off']):+.2f} | {safe_h:+.2f} (must be <= 45) |")
     print(f"| Hot on (cooling) | {nom_h[1]:+.2f} | {min(reg['h_on']):+.2f} to {max(reg['h_on']):+.2f} | "
           f"{min(st['h_on']):+.2f} to {max(st['h_on']):+.2f} | "
-          f"{max(fall['h_on']) + GRADIENT_K + err_h_k:+.2f} |")
+          f"{max(lagd['h_on']) + GRADIENT_K + err_h_k:+.2f} |")
     print()
-    print(f"Unrounded safety corners: cold off {min(fall['c_off']) - sc_c - err_c_k:+.4f} C, hot off "
-          f"{max(fall['h_off']) + GRADIENT_K + err_h_k:+.4f} C")
+    print(f"Unrounded safety corners: cold off {safe_c:+.4f} C, hot off {safe_h:+.4f} C")
     print(f"Safety corners at VREG {VREG_STATIC:.3f} V without the filter error: cold off "
           f"{min(st['c_off']) - sc_s:+.2f} C, hot off {max(st['h_off']) + GRADIENT_K:+.2f} C")
     print(f"Cold hysteresis: nominal {nom_c[1] - nom_c[0]:.2f} K, range {min(fall['c_hys']):.2f}-"
@@ -800,14 +972,14 @@ def main():
           f"{max(st['c_off']):+.2f} C, on {max(st['c_on']):+.2f} C; hot off {min(st['h_off']):+.2f} C, "
           f"on {min(st['h_on']):+.2f} C")
     print(f"Safety corners include NTC self-heating {NTC_SELF_HEAT_K} K and {LEAK_A * 1e9:.0f} nA of leakage "
-          f"at V_T ({leak_v * 1000:.2f} mV, {leak_k[vfl]:.3f} K), both on the cold side "
+          f"at V_T ({leak_v * 1000:.2f} mV, {leak_k[w_lo]:.3f} K), both on the cold side "
           f"only, and a {GRADIENT_K} K NTC-to-cell gradient (all assumed).")
 
     print()
     print(f"Input filters: C_T {C_T * 1e12:.0f} pF on V_T (plus {C_T_PAR[1] * 1e12:.0f} pF at most of "
           f"ESD diode, cable and board); R_IN {R_IN} k into each comparator input, no capacitor; "
-          f"R_F1 {R_F1} k and C_F1 {C_F1 * 1e12:.0f} pF on U1's tap; none on U2's tap (C0G "
-          f"+-{C_TOL * 100:.0f} %, resistors +-{RF_TOL * 100:.0f} %)")
+          f"R_F1 {R_F1} k and C_F1 {C_F1 * 1e12:.0f} pF on U1's tap; C_HOT {C_HOT * 1e12:.0f} pF on "
+          f"U2's tap (C0G +-{C_TOL * 100:.0f} %, resistors +-{RF_TOL * 100:.0f} %)")
     print(f"  Comparator inputs: {C_CM[0] * 1e12:.0f}-{C_CM[1] * 1e12:.0f} pF to AGND each, "
           f"{C_DM[0] * 1e12:.0f}-{C_DM[1] * 1e12:.0f} pF between the two; U1's tap node "
           f"{C_NODE[0] * 1e12:.1f}-{C_NODE[1] * 1e12:.0f} pF (assumed)")
@@ -815,40 +987,30 @@ def main():
           f"{R_RISE / 1000:.1f} V/ms; fall <= {I_VREG_MAX_MA} mA / {C_VREG_MIN * 1e6:.0f} uF = "
           f"{R_FALL:.0f} V/s (load {vreg_load_ma(VREG[2], True):.3f} mA at {VREG[2]} V with every gate "
           f"charging, {vreg_load_ma(VREG[2]):.3f} mA steady)")
-    print(f"  Solved as one coupled network, for any VREG history inside those slopes and either "
-          f"OUT1 state at every moment (RHYS to VREG or to AGND), plus OUT1's switching kick")
-    for comp, name, k, lead, lag in ((1, "U1", err_c_k, "IN+ (tap)", "IN- (V_T)"),
-                                     (2, "U2", err_h_k, "IN+ (V_T)", "IN- (tap)")):
-        f = flt[comp]
-        w = f["detail"]
-        print(f"  {name}: NTC {f['band'][0]:.2f}-{f['band'][1]:.2f} k (trip band +-{BAND_K} K). Searched, "
-              f"every value independent: all {2 ** len(BOX)} vertices at 3 NTC values ({f['n']}), the "
-              f"{N_TOP} worst at {N_NTC} NTC values, {N_ASCENT} local ascents, {N_RANDOM} random points")
-        print(f"    largest error found {f['best'] * 1000:.4f} mV: vertices {f['vertex'] * 1000:.4f}, "
-              f"across the band {f['ntc'] * 1000:.4f}, ascents {f['ascent'] * 1000:.4f}, random "
-              f"{f['random'] * 1000:.4f} mV")
-        print(f"    at the ascents' best point: rise term {w[1] * 1000:.4f}, fall term {w[2] * 1000:.4f}, "
-              f"kick {w[3] * 1000:.4f} mV; OUT1 high alone {w[4] * 1000:.4f}, OUT1 low alone "
-              f"{w[5] * 1000:.4f} mV")
-        ends = [(n, x) for (n, _, _), x in zip(BOX, f["x"])]
-        print(f"    there: high end {', '.join(n for n, x in ends if x == 1) or '-'}; low end "
-              f"{', '.join(n for n, x in ends if x == 0) or '-'}; inside "
-              f"{', '.join(f'{n} {x:.3f}' for n, x in ends if 0 < x < 1) or '-'}; NTC at "
-              f"{f['x'][-1]:.3f} of the band")
-        print(f"    in the trips: {FILTER_ALLOWANCE:.0f} x {f['best'] * 1000:.4f} = {f['err'] * 1000:.4f} mV "
-              f"= {k:.4f} K at {vfl:.3f} V. Mean delays {lead} {f['lead'][0] * 1e6:.3f}-"
-              f"{f['lead'][1] * 1e6:.3f} us, {lag} {f['lag'][0] * 1e6:.3f}-{f['lag'][1] * 1e6:.3f} us")
-        print(f"    Beyond the band, toward {'open' if comp == 1 else 'short'}: static distance exceeds "
-              f"the allowed error by >= {f['least'] * 1000:.0f} mV, and is >= {f['ratio']:.0f} times the "
-              f"error found (every vertex at the far end: {f['far'] * 1000:.3f} mV)")
-        print(f"    Integration check at that point: exact {w[0] * 1000:.5f} mV less kick "
-              f"{(w[0] - w[3]) * 1000:.5f} mV, trapezoid at 600 points a decade "
-              f"{check_integration(point(f['x'][:-1], ntc_at(f['x'][-1], *[x * 1e3 for x in f['band']])), comp) * 1000:.5f} mV")
-    e = unsafe_error(R5_M1_POINT, 1)
-    print(f"  R5-M1's U1 point (ntc {R5_M1_POINT['ntc']:.0f} ohm): OUT1 high alone {e[4] * 1000:.4f} mV, "
-          f"either state {e[0] * 1000:.4f} mV. With revision 4's 10 uF (both slopes x "
-          f"{C_VREG_MIN / 10e-6:.1f}; no kick here) OUT1 high alone is {e[4] * C_VREG_MIN / 10e-6 * 1000:.4f} mV: "
-          f"the review got 0.904692 at 60 points a decade, 0.904403 at 600")
+    print(f"  Bound (R6-M1): interval envelope of the whole network over the box ({len(BOX)} values, each "
+          f"independent) and the NTC, by Mueller's comparison theorem; for any VREG history inside "
+          f"those slopes, either OUT1 state and any OUT1 switching sequence (OUT1 <= V_TOP)")
+    for comp, name, k in ((1, "U1", err_c_k), (2, "U2", err_h_k)):
+        o = flt["u"][comp]
+        b = o["best"]
+        out, exact, kick, n = chk[comp]
+        print(f"  {name}: NTC {o['band'][0]:.3f}-{o['band'][1]:.3f} k (trip band +-{BAND_K} K): rise "
+              f"{b['rise'] * 1000:.4f}, fall {b['fall'] * 1000:.4f}, OUT1 switching {b['kick'] * 1000:.5f} mV; "
+              f"bound {o['err'] * 1000:.4f} mV = {k:.4f} K at {w_lo:.3f} V")
+        decades = " / ".join(str(pd) for pd in sorted(o["steps"]))
+        totals = " / ".join(f"{o['steps'][pd]['total'] * 1000:.4f}" for pd in sorted(o["steps"]))
+        print(f"    at {decades} points a decade: {totals} mV (the larger kept); changes of choice kept {o['kept']}, widening <= {o['widened']:.1e}; "
+              f"widest bound at {ENV_T[1] * 1000:.0f} ms {b['end']:.1e}")
+        for (n0, n1), _, r in o["pieces"]:
+            far = "open" if n1 is None else f"{n1 / 1000:.2f} k"
+            print(f"    beyond the band, NTC {n0 / 1000:.2f} k to {far}: bound {r['total'] * 1000:.4f} mV")
+        print(f"    Beyond the band, toward {'open' if comp == 1 else 'short'}: the static distance from the "
+              f"trip exceeds the bound by >= {o['least'] * 1000:.0f} mV")
+        print(f"    Validation, not part of the bound ({n} points, fixed seeds"
+              f"{', R5-M1 point included' if comp == 1 else ''}): exact responses outside the envelopes "
+              f"by <= {out:.1e}; exact rise + fall <= {exact * 1000:.4f} mV against "
+              f"{(b['rise'] + b['fall']) * 1000:.4f}; OUT1 excess <= {kick * 1000:.5f} mV against "
+              f"{b['kick'] * 1000:.5f}")
     old_t, old_tap = rev3_check()
     print(f"  Check, revision 3 solved as one network at 0 C (nominal NTC): V_T inputs' slowest time "
           f"constant {old_t * 1e6:.3f} us against U1's tap {old_tap * 1e6:.3f} us, so its ordering "
@@ -902,8 +1064,14 @@ def main():
     print(f"Margin from the highest LT3652 float to the lowest U3 trip: "
           f"{(ov[0] - flt_t[1]) * 1000:.0f} mV")
     assert vreg_load_ma(VREG[2], True) <= I_VREG_MAX_MA
-    assert max(err_c_k, err_h_k) < BAND_K and flt[1]["least"] > 0 and flt[2]["least"] > 0
-    assert min(fall["c_off"]) - sc_c - err_c_k >= 0 and max(fall["h_off"]) + GRADIENT_K + err_h_k <= 45
+    for comp in (1, 2):
+        b = flt["u"][comp]["best"]
+        out, exact, kick, _ = chk[comp]
+        assert flt["u"][comp]["least"] > 0 and out <= 1e-9
+        assert exact <= b["rise"] + b["fall"] and kick <= b["kick"]
+    assert min(lagd["c_off"]) - err_c_k >= c_trip[0] - BAND_K and max(lagd["c_on"]) + err_c_k <= c_trip[1] + BAND_K
+    assert min(lagd["h_on"]) - err_h_k >= h_trip[0] - BAND_K and max(lagd["h_off"]) + err_h_k <= h_trip[1] + BAND_K
+    assert safe_c >= 0 and safe_h <= 45
 
 
 if __name__ == "__main__":

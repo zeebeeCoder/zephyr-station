@@ -1,46 +1,48 @@
-Output of interlock_trips.py for F1 revision 5, run 27.10.2026 (computed, not measured).
-interlock_trips.py SHA-256: 5e00967cd07e1c65d111117bd3f0684d631f01bd16eab762be7dac3f4c375f12
+Output of interlock_trips.py for F1 revision 6, run 27.10.2026 (computed, not measured).
+interlock_trips.py SHA-256: 7cb3c40736aa2d081d75c353ed1bef9f4558feca499ed4ed3867fa0f5588a780
 
 $ python3 -I docs/calc/interlock_trips.py
 Resistors: RS 12.0 k, RC1 10.0 k, RC2 24.3 k, RHYS 3.32 M, RH1 10.0 k, RH2 4.02 k; tolerance +-0.175 % (RHYS +-1 %)
-NTC current at the cold trip: 82 uA, 0.198 mW -> self-heating 0.099 K in still air (allowance 0.1 K)
+NTC current at the cold trip, VREG 3.4 V: 82 uA, 0.198 mW -> self-heating 0.099 K in still air (allowance 0.1 K)
 
-VREG bands: regulated 3.2-3.4 V; U4 static 2.955-3.4 V (lowest VIT-); falling floor 2.6565-3.4 V
+VREG bands: regulated 3.2-3.4 V; U4 static 2.955-3.4 V (lowest VIT-); falling floor 2.6565-3.4 V; never above V_TOP 3.4 V (R6-N2)
   Floor: 10 % below the lowest VIT- (2.6595 V), less 50 V/s for U4's 30 us detect delay and 29.5 us for Q9 / Q10's gate to fall to 0.3 V
+  Lagged rail at the comparator inputs: W 2.4825-3.4004 V (the floor less 174.0 mV, the top plus 0.39 mV: the inputs' lag behind VREG at the steepest slopes)
 
-| Trip | Nominal, deg C | Electrical worst case, VREG regulated | VREG down to U4's threshold | Safety corner, VREG at the falling floor, plus the filter error |
+| Trip | Nominal, deg C | Electrical worst case, VREG regulated | VREG down to U4's threshold | Safety corner: lagged rail at the falling floor, plus the filter bound |
 |---|---|---|---|---|
-| Cold off (cooling) | +1.71 | +0.75 to +2.70 | +0.72 to +2.72 | +0.04 (must be >= 0) |
-| Cold on (warming) | +2.11 | +1.09 to +3.06 | +1.07 to +3.09 | +0.40 |
-| Hot off (heating) | +42.64 | +41.55 to +43.72 | +41.52 to +43.76 | +44.34 (must be <= 45) |
-| Hot on (cooling) | +42.42 | +41.36 to +43.52 | +41.33 to +43.55 | +44.10 |
+| Cold off (cooling) | +1.71 | +0.75 to +2.70 | +0.72 to +2.72 | +0.01 (must be >= 0) |
+| Cold on (warming) | +2.11 | +1.09 to +3.06 | +1.07 to +3.09 | +0.39 |
+| Hot off (heating) | +42.64 | +41.55 to +43.72 | +41.52 to +43.76 | +44.75 (must be <= 45) |
+| Hot on (cooling) | +42.42 | +41.36 to +43.52 | +41.33 to +43.55 | +44.49 |
 
-Unrounded safety corners: cold off +0.0369 C, hot off +44.3373 C
+Unrounded safety corners: cold off +0.0145 C, hot off +44.7451 C
 Safety corners at VREG 2.955 V without the filter error: cold off +0.12 C, hot off +44.26 C
 Cold hysteresis: nominal 0.40 K, range 0.24-0.53 K
 Hot hysteresis: nominal 0.22 K, range 0.07-0.37 K
 Energy corner for the winter model (VREG down to U4's threshold): off +2.72 C, on +3.09 C; hot off +41.52 C, on +41.33 C
-Safety corners include NTC self-heating 0.1 K and 20 nA of leakage at V_T (0.17 mV, 0.006 K), both on the cold side only, and a 0.5 K NTC-to-cell gradient (all assumed).
+Safety corners include NTC self-heating 0.1 K and 20 nA of leakage at V_T (0.17 mV, 0.007 K), both on the cold side only, and a 0.5 K NTC-to-cell gradient (all assumed).
 
-Input filters: C_T 680 pF on V_T (plus 50 pF at most of ESD diode, cable and board); R_IN 10.0 k into each comparator input, no capacitor; R_F1 27.0 k and C_F1 330 pF on U1's tap; none on U2's tap (C0G +-5 %, resistors +-1 %)
+Input filters: C_T 680 pF on V_T (plus 50 pF at most of ESD diode, cable and board); R_IN 10.0 k into each comparator input, no capacitor; R_F1 27.0 k and C_F1 330 pF on U1's tap; C_HOT 100 pF on U2's tap (C0G +-5 %, resistors +-1 %)
   Comparator inputs: 1-10 pF to AGND each, 0-8 pF between the two; U1's tap node 0.5-5 pF (assumed)
   VREG slope: rise <= 500 mA / 22 uF = 22.7 V/ms; fall <= 1.1 mA / 22 uF = 50 V/s (load 1.051 mA at 3.4 V with every gate charging, 0.738 mA steady)
-  Solved as one coupled network, for any VREG history inside those slopes and either OUT1 state at every moment (RHYS to VREG or to AGND), plus OUT1's switching kick
-  U1: NTC 26.44-32.17 k (trip band +-0.25 K). Searched, every value independent: all 262144 vertices at 3 NTC values (786432), the 64 worst at 17 NTC values, 8 local ascents, 2000 random points
-    largest error found 0.4520 mV: vertices 0.4520, across the band 0.4520, ascents 0.4520, random 0.3779 mV
-    at the ascents' best point: rise term 0.3281, fall term 0.1239, kick 0.0000 mV; OUT1 high alone 0.4075, OUT1 low alone 0.4509 mV
-    there: high end ct, rin1, cm1n, dm1, rc1, cm2p, cm2n, rh1, rh2; low end rs, rin2, cm1p, rc2, rhys, rf1, cf1, cnode, dm2; inside -; NTC at 1.000 of the band
-    in the trips: 2 x 0.4520 = 0.9039 mV = 0.0337 K at 2.657 V. Mean delays IN+ (tap) 10.622-12.290 us, IN- (V_T) 5.347-7.008 us
-    Beyond the band, toward open: static distance exceeds the allowed error by >= 59 mV, and is >= 15 times the error found (every vertex at the far end: 50.929 mV)
-    Integration check at that point: exact 0.45196 mV less kick 0.45196 mV, trapezoid at 600 points a decade 0.45196 mV
-  U2: NTC 4.43-5.24 k (trip band +-0.25 K). Searched, every value independent: all 262144 vertices at 3 NTC values (786432), the 64 worst at 17 NTC values, 8 local ascents, 2000 random points
-    largest error found 0.1911 mV: vertices 0.1911, across the band 0.1911, ascents 0.1911, random 0.1813 mV
-    at the ascents' best point: rise term 0.1438, fall term 0.0357, kick 0.0115 mV; OUT1 high alone 0.1795, OUT1 low alone 0.1790 mV
-    there: high end rs, rin1, rin2, cm1p, dm1, rc2, rf1, cf1, cnode, rh1; low end ct, cm1n, rc1, rhys, cm2p, cm2n, dm2, rh2; inside -; NTC at 1.000 of the band
-    in the trips: 2 x 0.1911 = 0.3821 mV = 0.0178 K at 2.657 V. Mean delays IN+ (V_T) 2.057-2.968 us, IN- (tap) 0.001-0.030 us
-    Beyond the band, toward short: static distance exceeds the allowed error by >= 60 mV, and is >= 321 times the error found (every vertex at the far end: 0.840 mV)
-    Integration check at that point: exact 0.19105 mV less kick 0.17953 mV, trapezoid at 600 points a decade 0.17953 mV
-  R5-M1's U1 point (ntc 32166 ohm): OUT1 high alone 0.4111 mV, either state 0.4472 mV. With revision 4's 10 uF (both slopes x 2.2; no kick here) OUT1 high alone is 0.9044 mV: the review got 0.904692 at 60 points a decade, 0.904403 at 600
+  Bound (R6-M1): interval envelope of the whole network over the box (19 values, each independent) and the NTC, by Mueller's comparison theorem; for any VREG history inside those slopes, either OUT1 state and any OUT1 switching sequence (OUT1 <= V_TOP)
+  U1: NTC 26.125-32.597 k (trip band +-0.5 K): rise 0.1599, fall 0.3099, OUT1 switching 0.09066 mV; bound 0.5605 mV = 0.0232 K at 2.483 V
+    at 40 / 80 points a decade: 0.5605 / 0.5478 mV (the larger kept); changes of choice kept 1097164, widening <= 4.0e-10; widest bound at 50 ms 9.7e-13
+    beyond the band, NTC 32.60 k to 39.12 k: bound 0.5994 mV
+    beyond the band, NTC 39.12 k to 48.90 k: bound 0.6532 mV
+    beyond the band, NTC 48.90 k to 81.49 k: bound 0.9857 mV
+    beyond the band, NTC 81.49 k to open: bound 17.2145 mV
+    Beyond the band, toward open: the static distance from the trip exceeds the bound by >= 38 mV
+    Validation, not part of the bound (65 points, fixed seeds, R5-M1 point included): exact responses outside the envelopes by <= 3.2e-12; exact rise + fall <= 0.2411 mV against 0.4698; OUT1 excess <= 0.00000 mV against 0.09066
+  U2: NTC 4.386-5.293 k (trip band +-0.5 K): rise 0.9368, fall 0.0473, OUT1 switching 6.49979 mV; bound 7.4838 mV = 0.3827 K at 2.483 V
+    at 40 / 80 points a decade: 7.4838 / 7.3471 mV (the larger kept); changes of choice kept 1107348, widening <= 1.1e-09; widest bound at 50 ms 7.8e-13
+    beyond the band, NTC 3.51 k to 4.39 k: bound 7.9788 mV
+    beyond the band, NTC 2.63 k to 3.51 k: bound 8.4261 mV
+    beyond the band, NTC 1.32 k to 2.63 k: bound 12.5960 mV
+    beyond the band, NTC 0.13 k to 1.32 k: bound 127.6966 mV
+    Beyond the band, toward short: the static distance from the trip exceeds the bound by >= 26 mV
+    Validation, not part of the bound (64 points, fixed seeds): exact responses outside the envelopes by <= 1.1e-12; exact rise + fall <= 0.1859 mV against 0.9840; OUT1 excess <= 0.01255 mV against 6.49979
   Check, revision 3 solved as one network at 0 C (nominal NTC): V_T inputs' slowest time constant 27.462 us against U1's tap 27.069 us, so its ordering claim failed (R4-M1)
 
 U4 TPS3840PL30: off below 2.955-3.045 V, on above 3.030-3.170 V (regulated VREG >= 3.2 V); delay after a full reset 0.29-1.05 s with CT 0.8-1.2 uF
