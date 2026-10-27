@@ -1,9 +1,9 @@
-Output of winter_model.py for F1 revision 4, run 26.10.2026 (model-derived, not measured).
+Output of winter_model.py for F1 revision 5, run 27.10.2026 (model-derived, not measured).
 
 Inputs: PVGIS v5.3 hourly series, lat 50.90, lon 15.73, 2005-2023, 1 kWp, loss 14 %, fetched with the
 query in the script's docstring. aspect=53 is the panel's compass azimuth of 233 deg (owner answer 15);
 aspect=0 is south, the revision-1 assumption. The files live in the gitignored build/f1-revision/pvgis/.
-Each run prints the SHA-256 of the files it read. winter_model.py SHA-256: 0235f8dc2495c511e9f5df3c74b9a797b033b314d26bf16e1c6f81ec37dd1cf2
+Each run prints the SHA-256 of the files it read. winter_model.py SHA-256: 0e5a4e29c5315b1ef28588eec221e3b6d01f6ba7c08e58e2b7d1de090f6c92a2
 Interlock trips from calc/interlock_trips.py (calc/interlock_trips_output.txt).
 Sleep floors on the cells: 55.8 uA typical at 3.7 V, 138.7 uA high-side estimate at 3.0 V and 70 % conversion,
 pessimistic because the converter runs down to 3.05 V at most (ARCHITECTURE.md section 4.2). Cells: Samsung
@@ -95,22 +95,22 @@ Adaptive profiles: the worst of a charge estimate 15 % low, exact and 15 % high.
 |---|---|---|---|---|---|
 | Revision-1 gate: stateless +1 / +44 C | none (lowest 68 %) | none (lowest 55 %) | none (lowest 55 %) | none (lowest 55 %) | none (lowest 24 %) |
 | Interlock nominal (+1.7 off / +2.1 on), reset at night | none (lowest 54 %) | none (lowest 38 %) | none (lowest 38 %) | none (lowest 31 %) | 1/18, 17 d (longest 17 d) |
-| Interlock energy corner (+2.7 / +3.1), reset at night | none (lowest 40 %) | none (lowest 27 %) | none (lowest 27 %) | none (lowest 8 %) | 1/18, 50 d (longest 33 d) |
+| Interlock energy corner (+2.7 / +3.1), reset at night | none (lowest 40 %) | none (lowest 27 %) | none (lowest 27 %) | 1/18, 15 d (longest 15 d) | 1/18, 59 d (longest 33 d) |
 | Review sensitivity +1 / +4 C, state kept overnight | none (lowest 24 %) | none (lowest 18 %) | none (lowest 18 %) | 1/18, 31 d (longest 31 d) | 1/18, 70 d (longest 70 d) |
-| Energy corner, tilt 70 deg | none (lowest 39 %) | none (lowest 27 %) | none (lowest 26 %) | none (lowest 7 %) | 1/18, 51 d (longest 34 d) |
-| Energy corner, panel due south | none (lowest 40 %) | none (lowest 27 %) | none (lowest 27 %) | none (lowest 4 %) | 1/18, 53 d (longest 33 d) |
+| Energy corner, tilt 70 deg | none (lowest 39 %) | none (lowest 25 %) | none (lowest 25 %) | 1/18, 17 d (longest 17 d) | 1/18, 61 d (longest 34 d) |
+| Energy corner, panel due south | none (lowest 40 %) | none (lowest 26 %) | none (lowest 26 %) | 1/18, 16 d (longest 16 d) | 1/18, 60 d (longest 33 d) |
 
 Smallest nominal pack with no outage hour in 2005/06-2022/23 (10 W, 45 deg, azimuth 233 deg),
 as Ah and as 3.35 Ah cells in parallel, new (and with 20 % capacity fade):
 | Load profile | Interlock nominal | Energy corner | Energy corner, charge estimate off by up to 15 % |
 |---|---|---|---|
-| M1 now (19.4-min cycle) | 32.6 Ah = 10 cells (13) | 44.6 Ah = 14 cells (17) | as energy corner (no estimate used) |
-| M1 nominal, 1-min listen | 43.3 Ah = 13 cells (17) | 55.7 Ah = 17 cells (21) | as energy corner (no estimate used) |
-| M1 pessimistic, 1-min listen | 74.1 Ah = 23 cells (28) | 87.7 Ah = 27 cells (33) | as energy corner (no estimate used) |
-| M1 reads, no listen | 17.0 Ah = 6 cells (7) | 22.7 Ah = 7 cells (9) | as energy corner (no estimate used) |
-| M1 reads, no listen, pessimistic | 27.4 Ah = 9 cells (11) | 37.6 Ah = 12 cells (15) | as energy corner (no estimate used) |
-| M2 nominal | 9.5 Ah = 3 cells (4) | 14.0 Ah = 5 cells (6) | as energy corner (no estimate used) |
-| M2 pessimistic | 15.0 Ah = 5 cells (6) | 20.2 Ah = 7 cells (8) | as energy corner (no estimate used) |
+| M1 now (19.4-min cycle) | 32.6 Ah = 10 cells (13) | 48.1 Ah = 15 cells (18) | as energy corner (no estimate used) |
+| M1 nominal, 1-min listen | 43.3 Ah = 13 cells (17) | 59.2 Ah = 18 cells (23) | as energy corner (no estimate used) |
+| M1 pessimistic, 1-min listen | 74.1 Ah = 23 cells (28) | 91.2 Ah = 28 cells (35) | as energy corner (no estimate used) |
+| M1 reads, no listen | 17.0 Ah = 6 cells (7) | 26.2 Ah = 8 cells (10) | as energy corner (no estimate used) |
+| M1 reads, no listen, pessimistic | 27.4 Ah = 9 cells (11) | 41.0 Ah = 13 cells (16) | as energy corner (no estimate used) |
+| M2 nominal | 9.5 Ah = 3 cells (4) | 15.6 Ah = 5 cells (6) | as energy corner (no estimate used) |
+| M2 pessimistic | 15.0 Ah = 5 cells (6) | 23.6 Ah = 8 cells (9) | as energy corner (no estimate used) |
 | M2 adaptive | 1.4 Ah = 1 cells (1) | 1.5 Ah = 1 cells (1) | 2.9 Ah = 1 cells (2) |
 | M2 adaptive pessimistic | 2.1 Ah = 1 cells (1) | 2.6 Ah = 1 cells (1) | 4.0 Ah = 2 cells (2) |
 | M2 adaptive, 2 s ACK window | 1.5 Ah = 1 cells (1) | 1.6 Ah = 1 cells (1) | 2.5 Ah = 1 cells (1) |
@@ -122,24 +122,24 @@ Pack options at the energy corner (10 W, 45 deg, azimuth 233 deg), each with the
 are per winter.
 | Profile | Pack | Outage days | Lowest charge | Lean d per winter | Survival d per winter |
 |---|---|---|---|---|---|
-| M2 adaptive pessimistic | 3 cells, 10.05 Ah | 0 / 0 / 0 | 43 % / 27 % / 14 % | 23.9 / 14.8 / 8.9 | 5.4 / 3.7 / 2.9 |
-| M2 adaptive pessimistic | 3 cells, 8.04 Ah (20 % faded) | 0 / 0 / 0 | 41 % / 28 % / 14 % | 25.9 / 17.4 / 11.3 | 8.4 / 5.5 / 4.3 |
-| M2 adaptive pessimistic | 8 cells, 26.80 Ah | 0 / 0 / 0 | 50 % / 42 % / 36 % | 10.4 / 5.0 / 2.5 | 0.1 / 0.0 / 0.0 |
-| M2 adaptive pessimistic | 8 cells, 21.44 Ah (20 % faded) | 0 / 0 / 0 | 48 % / 35 % / 27 % | 13.5 / 6.6 / 4.4 | 1.0 / 0.1 / 0.0 |
-| M2 adaptive pessimistic | 14 cells, 46.90 Ah | 0 / 0 / 0 | 64 % / 58 % / 54 % | 4.9 / 2.4 / 0.0 | 0.0 / 0.0 / 0.0 |
-| M2 adaptive pessimistic | 14 cells, 37.52 Ah (20 % faded) | 0 / 0 / 0 | 59 % / 53 % / 45 % | 6.4 / 3.4 / 0.1 | 0.0 / 0.0 / 0.0 |
-| M2 adaptive pessimistic, 2 s ACK window | 3 cells, 10.05 Ah | 0 / 0 / 0 | 43 % / 27 % / 14 % | 24.1 / 14.8 / 9.0 | 5.5 / 3.8 / 2.9 |
-| M2 adaptive pessimistic, 2 s ACK window | 3 cells, 8.04 Ah (20 % faded) | 0 / 0 / 0 | 41 % / 27 % / 14 % | 26.0 / 17.5 / 11.3 | 8.5 / 5.6 / 4.4 |
-| M2 adaptive pessimistic, 2 s ACK window | 8 cells, 26.80 Ah | 0 / 0 / 0 | 50 % / 42 % / 36 % | 10.4 / 5.0 / 2.5 | 0.1 / 0.0 / 0.0 |
-| M2 adaptive pessimistic, 2 s ACK window | 8 cells, 21.44 Ah (20 % faded) | 0 / 0 / 0 | 48 % / 35 % / 27 % | 13.6 / 6.7 / 4.4 | 1.0 / 0.1 / 0.0 |
-| M2 adaptive pessimistic, 2 s ACK window | 14 cells, 46.90 Ah | 0 / 0 / 0 | 64 % / 58 % / 53 % | 4.9 / 2.4 / 0.0 | 0.0 / 0.0 / 0.0 |
-| M2 adaptive pessimistic, 2 s ACK window | 14 cells, 37.52 Ah (20 % faded) | 0 / 0 / 0 | 59 % / 52 % / 44 % | 6.5 / 3.4 / 0.1 | 0.0 / 0.0 / 0.0 |
-| M2 adaptive | 3 cells, 10.05 Ah | 0 / 0 / 0 | 45 % / 31 % / 18 % | 17.6 / 9.0 / 4.8 | 3.0 / 1.8 / 1.0 |
-| M2 adaptive | 3 cells, 8.04 Ah (20 % faded) | 0 / 0 / 0 | 46 % / 29 % / 16 % | 20.7 / 11.5 / 6.3 | 4.6 / 3.0 / 2.0 |
-| M2 adaptive | 8 cells, 26.80 Ah | 0 / 0 / 0 | 59 % / 53 % / 47 % | 6.3 / 1.6 / 0.0 | 0.0 / 0.0 / 0.0 |
-| M2 adaptive | 8 cells, 21.44 Ah (20 % faded) | 0 / 0 / 0 | 54 % / 46 % / 40 % | 8.0 / 3.5 / 0.9 | 0.0 / 0.0 / 0.0 |
-| M2 adaptive | 14 cells, 46.90 Ah | 0 / 0 / 0 | 70 % / 67 % / 67 % | 3.2 / 0.0 / 0.0 | 0.0 / 0.0 / 0.0 |
-| M2 adaptive | 14 cells, 37.52 Ah (20 % faded) | 0 / 0 / 0 | 67 % / 60 % / 60 % | 4.2 / 0.0 / 0.0 | 0.0 / 0.0 / 0.0 |
+| M2 adaptive pessimistic | 3 cells, 10.05 Ah | 0 / 0 / 0 | 43 % / 27 % / 14 % | 24.3 / 15.0 / 9.3 | 5.7 / 4.0 / 3.1 |
+| M2 adaptive pessimistic | 3 cells, 8.04 Ah (20 % faded) | 0 / 0 / 0 | 41 % / 28 % / 14 % | 26.2 / 18.1 / 12.1 | 8.6 / 5.8 / 4.5 |
+| M2 adaptive pessimistic | 8 cells, 26.80 Ah | 0 / 0 / 0 | 50 % / 42 % / 36 % | 10.4 / 5.0 / 3.2 | 0.1 / 0.0 / 0.0 |
+| M2 adaptive pessimistic | 8 cells, 21.44 Ah (20 % faded) | 0 / 0 / 0 | 48 % / 35 % / 27 % | 13.4 / 6.6 / 4.4 | 1.1 / 0.1 / 0.0 |
+| M2 adaptive pessimistic | 14 cells, 46.90 Ah | 0 / 0 / 0 | 63 % / 57 % / 47 % | 4.9 / 2.4 / 0.0 | 0.0 / 0.0 / 0.0 |
+| M2 adaptive pessimistic | 14 cells, 37.52 Ah (20 % faded) | 0 / 0 / 0 | 58 % / 52 % / 42 % | 6.5 / 3.4 / 1.2 | 0.0 / 0.0 / 0.0 |
+| M2 adaptive pessimistic, 2 s ACK window | 3 cells, 10.05 Ah | 0 / 0 / 0 | 43 % / 27 % / 14 % | 24.4 / 15.1 / 9.4 | 5.7 / 4.1 / 3.1 |
+| M2 adaptive pessimistic, 2 s ACK window | 3 cells, 8.04 Ah (20 % faded) | 0 / 0 / 0 | 41 % / 27 % / 14 % | 26.2 / 18.2 / 12.2 | 8.8 / 5.8 / 4.6 |
+| M2 adaptive pessimistic, 2 s ACK window | 8 cells, 26.80 Ah | 0 / 0 / 0 | 50 % / 42 % / 35 % | 10.4 / 5.0 / 3.3 | 0.1 / 0.0 / 0.0 |
+| M2 adaptive pessimistic, 2 s ACK window | 8 cells, 21.44 Ah (20 % faded) | 0 / 0 / 0 | 48 % / 35 % / 27 % | 13.4 / 6.7 / 4.4 | 1.1 / 0.1 / 0.0 |
+| M2 adaptive pessimistic, 2 s ACK window | 14 cells, 46.90 Ah | 0 / 0 / 0 | 63 % / 57 % / 47 % | 4.9 / 2.4 / 0.0 | 0.0 / 0.0 / 0.0 |
+| M2 adaptive pessimistic, 2 s ACK window | 14 cells, 37.52 Ah (20 % faded) | 0 / 0 / 0 | 58 % / 52 % / 42 % | 6.5 / 3.4 / 1.2 | 0.0 / 0.0 / 0.0 |
+| M2 adaptive | 3 cells, 10.05 Ah | 0 / 0 / 0 | 45 % / 31 % / 18 % | 18.9 / 10.4 / 6.3 | 3.0 / 1.8 / 1.0 |
+| M2 adaptive | 3 cells, 8.04 Ah (20 % faded) | 0 / 0 / 0 | 46 % / 29 % / 16 % | 21.7 / 13.1 / 7.9 | 4.6 / 3.0 / 2.0 |
+| M2 adaptive | 8 cells, 26.80 Ah | 0 / 0 / 0 | 59 % / 53 % / 44 % | 6.3 / 3.3 / 0.9 | 0.0 / 0.0 / 0.0 |
+| M2 adaptive | 8 cells, 21.44 Ah (20 % faded) | 0 / 0 / 0 | 54 % / 46 % / 40 % | 8.0 / 4.4 / 2.7 | 0.0 / 0.0 / 0.0 |
+| M2 adaptive | 14 cells, 46.90 Ah | 0 / 0 / 0 | 70 % / 62 % / 62 % | 3.2 / 0.0 / 0.0 | 0.0 / 0.0 / 0.0 |
+| M2 adaptive | 14 cells, 37.52 Ah (20 % faded) | 0 / 0 / 0 | 67 % / 59 % / 55 % | 4.2 / 1.1 / 0.0 | 0.0 / 0.0 / 0.0 |
 
 Largest full-read cost (battery side, with PM) that still leaves no outage hour: energy corner,
 charge estimate off by up to 15 %, pessimistic floor and PMS7003 (1.464 mAh per read), the rest of
@@ -147,17 +147,17 @@ every read scaled alike. For comparison, a pessimistic full read costs 1.782 mAh
 in M1.
 | Pack | Adaptive 15 / 30 / 60 min, no listen | Fixed 15 min, no listen |
 |---|---|---|
-| 8 cells, 26.80 Ah | 4.79 mAh | 2.17 mAh |
-| 8 cells, 21.44 Ah (20 % faded) | 3.99 mAh | 1.86 mAh |
-| 14 cells, 46.90 Ah | 7.80 mAh | 3.33 mAh |
-| 14 cells, 37.52 Ah (20 % faded) | 6.39 mAh | 2.79 mAh |
+| 8 cells, 26.80 Ah | 4.79 mAh | 1.97 mAh |
+| 8 cells, 21.44 Ah (20 % faded) | 3.99 mAh | 1.66 mAh |
+| 14 cells, 46.90 Ah | 7.15 mAh | 3.13 mAh |
+| 14 cells, 37.52 Ah (20 % faded) | 6.14 mAh | 2.59 mAh |
 
 Sleep floor at R-P7's limit (b): 151.4 uA on the cells instead of 138.7 uA.
 M2 adaptive pessimistic at the energy corner, charge estimate 15 % low / exact / 15 % high.
 | Pack | Outage days | Lowest charge | Largest full-read cost, adaptive |
 |---|---|---|---|
 | 8 cells, 21.44 Ah (20 % faded) | 0 / 0 / 0 | 48 % / 35 % / 27 % | 3.98 mAh |
-| 14 cells, 37.52 Ah (20 % faded) | 0 / 0 / 0 | 59 % / 53 % / 44 % | 6.38 mAh |
+| 14 cells, 37.52 Ah (20 % faded) | 0 / 0 / 0 | 58 % / 52 % / 42 % | 6.13 mAh |
 
 Low-energy recovery at the energy corner, today's pack (10.05 Ah): hibernation entries, restarts
 into the lowest schedule, UVLO cut-offs (TPS3840) and the longest outage, over 18 winters.
@@ -165,12 +165,12 @@ into the lowest schedule, UVLO cut-offs (TPS3840) and the longest outage, over 1
 |---|---|---|---|---|
 | M1 now (19.4-min cycle) | 16 | 16 | 0 | 68.3 d from 20051211 |
 | M1 nominal, 1-min listen | 23 | 23 | 0 | 72.6 d from 20051207 |
-| M1 reads, no listen | 5 | 5 | 0 | 51.3 d from 20051228 |
+| M1 reads, no listen | 6 | 6 | 0 | 51.3 d from 20051228 |
 | M1 reads, no listen, pessimistic | 14 | 14 | 0 | 65.3 d from 20051214 |
-| M2 nominal | 1 | 1 | 0 | 27.7 d from 20060120 |
-| M2 pessimistic | 3 | 3 | 0 | 49.4 d from 20051231 |
+| M2 nominal | 3 | 3 | 0 | 27.7 d from 20060120 |
+| M2 pessimistic | 4 | 4 | 0 | 49.4 d from 20051231 |
 | M2 adaptive | 0 | 0 | 0 | none |
 | M2 adaptive pessimistic | 0 | 0 | 0 | none |
-| M1 reads, no listen, firmware never hibernates (TPS3840 only) | 0 | 3 | 3 | 51.0 d from 20051229 |
-| M2 pessimistic, firmware never hibernates (TPS3840 only) | 0 | 3 | 3 | 48.0 d from 20060101 |
+| M1 reads, no listen, firmware never hibernates (TPS3840 only) | 0 | 4 | 4 | 51.0 d from 20051229 |
+| M2 pessimistic, firmware never hibernates (TPS3840 only) | 0 | 4 | 4 | 48.0 d from 20060101 |
 

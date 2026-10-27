@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hourly winter energy model for the Zephyr station PCB (F1 revision 4).
+"""Hourly winter energy model for the Zephyr station PCB (F1 revision 5).
 
 Input is a PVGIS v5.3 seriescalc JSON: hourly, pvcalculation=1, peakpower=1
 (kWp), loss=14. PVGIS's aspect is the azimuth from south (90 = west), so the
@@ -306,9 +306,10 @@ R2_POLICY = dict(lean=(0.60, 0.70), surv=(0.35, 0.40), hib_at=0.03, restart=0.12
 SOC_ERROR = 0.15             # the firmware's charge estimate may be off by this much either way (assumed)
 
 # Interlock trips at the NTC in deg C: (cold off, cold on, hot off, hot on), from
-# calc/interlock_trips.py. The energy corner puts every tolerance toward less charging.
+# calc/interlock_trips.py. The energy corner puts every tolerance toward less charging, and is
+# rounded that way. Revision 5 adds the comparator's output levels (cold off 2.709 -> 2.723 C).
 GATE_NOMINAL = (1.71, 2.11, 42.64, 42.42)
-GATE_CORNER = (2.71, 3.09, 41.52, 41.33)
+GATE_CORNER = (2.73, 3.09, 41.52, 41.32)
 GATE_R1 = (1.0, 1.0, 44.0, 44.0)           # revision 1: stateless +1 / +44 C
 
 

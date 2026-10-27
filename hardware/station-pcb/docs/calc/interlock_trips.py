@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Trip points of the charge interlock, with tolerances (F1 revision 4).
+"""Trip points of the charge interlock, with tolerances (F1 revision 5).
 
 Circuit (ARCHITECTURE.md D5): a ratiometric NTC divider and three TLV3012B comparators,
 all fed from the interlock rail VREG, plus a TPS3840PL30 (U4) that watches VREG itself.
@@ -18,16 +18,23 @@ Input filters (revision 4, R4-M1): one capacitor C_T on the NTC node V_T. Each c
 that sees V_T is fed from it through R_IN, with no capacitor of its own. U1's tap reaches its
 input through R_F1 with C_F1 to AGND; U2's tap has no capacitor. The comparators' own input
 capacitance, common-mode and differential, is part of the network. filter_check() solves the
-whole network as one coupled RC circuit and bounds the error between each comparator's two
-inputs for any history of VREG whose slope stays between -R_FALL and +R_RISE: short dips,
-restarts and charge left on the capacitors included.
+whole network as one coupled RC circuit. For one set of component values it bounds the error
+between each comparator's two inputs for any history of VREG whose slope stays between -R_FALL
+and +R_RISE, and any history of OUT1 (RHYS's far end), starting from rest: short dips, restarts
+and charge left on the capacitors included. Over the component tolerances it searches (revision
+5, R5-M1): every vertex of the independent tolerance box, then the NTC across the band, a local
+ascent into the interior and random points. A search is not a proof that nothing larger exists,
+so the trips carry FILTER_ALLOWANCE times the largest error found.
 
-Every input is a datasheet value or a labelled assumption. Standard library only:
+Every input is a datasheet value or a labelled assumption. Standard library only; the search
+runs on every CPU and takes a few minutes:
   python3 -I interlock_trips.py
 """
 
+import heapq
 import itertools
 import math
+import multiprocessing
 import random
 
 # NTC: Shiheng MF52A 103F3950, R-T table (attachment I, P477-4B), kOhm (min, nominal, max).
@@ -53,10 +60,13 @@ RHYS_TOL = 0.01
 RS, RC1, RC2, RHYS, RH1, RH2 = 12.0, 10.0, 24.3, 3320.0, 10.0, 4.02   # kOhm, 0.1 % E96 values
 
 # TLV3012B (SBOS300C section 6.9, -40 to +125 C): offset +-9 mV, built-in hysteresis 2-8 mV,
-# supply 1.65-5.5 V, quiescent current 3.6 uA maximum, VOH >= V+ - 0.2 V sourcing 5 mA.
+# supply 1.65-5.5 V, quiescent current 3.6 uA maximum, VOH >= V+ - 0.2 V sourcing 5 mA,
+# VOL <= 0.2 V sinking 5 mA. OUT1 is RHYS's far end: high is VREG less 0 to TLV_VOH_DROP, low is
+# 0 to TLV_VOL (R5-M1). Its load (RHYS, one gate divider) is far below 5 mA, so the drop is
+# taken as quasi-static: an offset, not a moving source.
 VOS_MAX = 0.009
 VHYS = (0.002, 0.006, 0.008)
-TLV_VOH_DROP = 0.2
+TLV_VOH_DROP, TLV_VOL = 0.2, 0.2
 VREG = (3.2, 3.3, 3.4)   # TPS7B6933 regulating: 3.3 V +-3 % (offsets scale with 1/VREG)
 
 # U4: TPS3840PL30 (SNVSB03E). VIT- = 3.0 V +-1.5 %, hysteresis 75-125 mV for VIT- <= 3.0 V,
@@ -80,11 +90,13 @@ C_G_MAX = 100e-12
 VGS_OFF = 0.3
 N_GATES = 10             # gates driven from VREG, rounded up (Q1, Q2, Q4-Q10)
 
-# VREG's slope. Rise: at most the TPS7B6933's current limit, 500 mA maximum (IOCL), into
-# C_VREG_MIN >= 10 uF effective at 3.3 V (F2; the TPS7B6933 allows 2.2-100 uF). Fall: the LDO
+# VREG's slope. Rise: at most the TPS7B6933's current limit, 500 mA maximum (IOCL, specified
+# with OUT shorted; that it holds at every output voltage and during start-up is an assumption
+# F2 confirms with TI or F6 measures, R5-N2), into C_VREG_MIN >= 22 uF effective at 3.4 V
+# (F2; the TPS7B6933 allows 2.2-100 uF; revision 4 had 10 uF, raised for R5-M1). Fall: the LDO
 # doesn't sink, and its input diodes block backflow, so VREG falls no faster than its load over
 # C_VREG_MIN. I_VREG_MAX_MA bounds that load, with every gate charging (vreg_load_ma below).
-I_LDO_LIMIT_A, C_VREG_MIN, I_VREG_MAX_MA = 0.5, 10e-6, 1.1
+I_LDO_LIMIT_A, C_VREG_MIN, I_VREG_MAX_MA = 0.5, 22e-6, 1.1
 R_RISE = I_LDO_LIMIT_A / C_VREG_MIN          # V/s
 R_FALL = I_VREG_MAX_MA / 1000 / C_VREG_MIN   # V/s
 
@@ -96,8 +108,12 @@ C_CM = (1e-12, 10e-12)     # each comparator input to AGND: 2 pF typical [TL], p
 C_DM = (0.0, 8e-12)        # between a comparator's inputs: 4 pF typical [TL], doubled (assumed)
 C_NODE = (0.5e-12, 5e-12)  # U1's tap node before R_F1 (assumed)
 BAND_K = 0.25            # each trip band is widened by this much for the filter error (K)
-GRID = [10 ** (-11 + i / 60) for i in range(8 * 60 + 1)]   # 10 ps to 1 ms, 60 points a decade
-N_RANDOM = 300           # random interior points checked against the corners (fixed seed)
+T_DECADE = 12            # grid points a decade for finding the kernels' sign changes
+N_TOP = 64               # worst vertices kept for the NTC refinement and the checks beyond the band
+N_NTC = 17               # NTC values across the band for those vertices
+N_ASCENT = 8             # local ascents into the interior, from the worst points found
+N_RANDOM = 2000          # random interior points (fixed seeds)
+FILTER_ALLOWANCE = 2.0   # the trips carry this times the largest error the search finds (R5-M1)
 
 # U3: LM4041-B (SNOS641I): 1.225 V +-0.2 % at 25 C, 100 ppm/K maximum average drift, taken over
 # the same 25 +- 30 K as the resistors (board temperature while charging is possible, assumed).
@@ -143,10 +159,12 @@ def par(a, b):
     return a * b / (a + b)
 
 
-def cold_trips(rs, rc1, rc2, rhys, vos, vhys, vreg, k, drift):
-    """U1 trip temperatures (off while cooling, on while warming)."""
-    tap_hi = rc2 / (rc2 + par(rc1, rhys))           # OUT1 high pulls the tap up
-    tap_lo = par(rc2, rhys) / (rc1 + par(rc2, rhys))  # OUT1 low pulls it down
+def cold_trips(rs, rc1, rc2, rhys, vos, vhys, vreg, k, drift, drop=0.0, vol=0.0):
+    """U1 trip temperatures (off while cooling, on while warming). OUT1 high is vreg - drop,
+    OUT1 low is vol."""
+    g = 1 / rc1 + 1 / rc2 + 1 / rhys
+    tap_hi = (1 / rc1 + (1 - drop / vreg) / rhys) / g   # OUT1 high pulls the tap up
+    tap_lo = (1 / rc1 + vol / vreg / rhys) / g          # OUT1 low pulls it down
     v_off = tap_hi - (vos - vhys / 2) / vreg         # V_T above this turns OUT1 low
     v_on = tap_lo - (vos + vhys / 2) / vreg          # V_T below this turns OUT1 high
     return (temp_at(v_off, rs, k, drift, -2, 5), temp_at(v_on, rs, k, drift, -2, 5))
@@ -167,8 +185,10 @@ def corners(vreg_lo, vreg_hi):
             sign, sign, sign, sign, sign, (VHYS[0], VHYS[2]), (vreg_lo, vreg_hi), (0, 2), sign):
         rs = RS * (1 + s_rs * R_TOL)
         drift = sd * NTC_DRIFT
-        cold.append(cold_trips(rs, RC1 * (1 + s1 * R_TOL), RC2 * (1 + s2 * R_TOL),
-                               RHYS * (1 + s3 * RHYS_TOL), sv * VOS_MAX, vh, vr, k, drift))
+        for drop, vol in itertools.product((0.0, TLV_VOH_DROP), (0.0, TLV_VOL)):
+            cold.append(cold_trips(rs, RC1 * (1 + s1 * R_TOL), RC2 * (1 + s2 * R_TOL),
+                                   RHYS * (1 + s3 * RHYS_TOL), sv * VOS_MAX, vh, vr, k, drift,
+                                   drop, vol))
         hot.append(hot_trips(rs, RH1 * (1 + s1 * R_TOL), RH2 * (1 + s2 * R_TOL),
                              sv * VOS_MAX, vh, vr, k, drift))
     return cold, hot
@@ -246,40 +266,43 @@ def jacobi(a):
     return [a[i][i] for i in range(n)], v
 
 
-def step_response(caps, cond, src):
-    """Unit-step response of an RC network from rest: caps is the capacitance matrix (F),
-    cond the conductance matrix (S) and src the conductances to VREG. With C = L L^T the
-    system y' = -A y + L^-1 src, A = L^-1 G L^-T, is symmetric. Returns (rates, coeffs, vss):
-    node i follows vss[i] * (1 - sum_k coeffs[i][k] exp(-rates[k] t))."""
+def modes(caps, cond, srcs):
+    """Step responses of an RC network from rest: caps is the capacitance matrix (F), cond the
+    conductance matrix (S), and each src the conductances to one source. With C = L L^T the
+    system y' = -A y + L^-1 src, A = L^-1 G L^-T, is symmetric. Returns the rates and, for each
+    source, (amp, vss): after a unit step of that source alone, node i follows
+    vss[i] + sum_k amp[i][k] exp(-rates[k] t)."""
     n = len(caps)
     low = cholesky(caps)
     li = lower_inverse(low)
     a = [[sum(li[i][p] * cond[p][q] * li[j][q] for p in range(n) for q in range(n))
           for j in range(n)] for i in range(n)]
     rates, vec = jacobi(a)
-    vss = solve(cond, src)
-    y = [sum(low[p][i] * vss[p] for p in range(n)) for i in range(n)]
-    w = [sum(vec[p][k] * y[p] for p in range(n)) for k in range(n)]
     m = [[sum(li[p][i] * vec[p][k] for p in range(n)) for k in range(n)] for i in range(n)]
-    coeffs = [[m[i][k] * w[k] / vss[i] for k in range(n)] for i in range(n)]
-    return rates, coeffs, vss
+    out = []
+    for src in srcs:
+        vss = solve(cond, src)
+        y = [sum(low[p][i] * vss[p] for p in range(n)) for i in range(n)]
+        w = [sum(vec[p][k] * y[p] for p in range(n)) for k in range(n)]
+        out.append(([[-m[i][k] * w[k] for k in range(n)] for i in range(n)], vss))
+    return rates, out
 
 
 def network(p):
-    """The whole input network for one set of values p (ohms, farads). Nodes: 0 V_T,
-    1 U1 IN- (from V_T), 2 U2 IN+ (from V_T), 3 U1's tap node, 4 U1 IN+ (after R_F1),
-    5 U2 IN- (the hot tap). OUT1 is taken as high (RHYS to VREG); RHYS is 3.32 MOhm, so the
-    dynamics barely depend on it."""
+    """The whole input network for one set of values p (ohms, farads; ntc None = open). Nodes:
+    0 V_T, 1 U1 IN- (from V_T), 2 U2 IN+ (from V_T), 3 U1's tap node, 4 U1 IN+ (after R_F1),
+    5 U2 IN- (the hot tap). Two sources: VREG (through RS, RC1 and RH1) and OUT1 (through
+    RHYS). Returns the rates and each source's (amp, vss), as modes() does."""
     n = 6
     cond = [[0.0] * n for _ in range(n)]
     caps = [[0.0] * n for _ in range(n)]
-    src = [0.0] * n
+    src = {"vreg": [0.0] * n, "out1": [0.0] * n}
 
-    def r(i, j, ohm):          # resistor between nodes i and j; j None = VREG, -1 = AGND
+    def r(i, j, ohm):          # resistor between nodes i and j; j a source name, or -1 = AGND
         g = 1 / ohm
         cond[i][i] += g
-        if j is None:
-            src[i] += g
+        if j in src:
+            src[j][i] += g
         elif j >= 0:
             cond[j][j] += g
             cond[i][j] -= g
@@ -292,100 +315,242 @@ def network(p):
             caps[i][j] -= farad
             caps[j][i] -= farad
 
-    r(0, None, p["rs"])
+    r(0, "vreg", p["rs"])
     if p["ntc"] is not None:
         r(0, -1, p["ntc"])
     c(0, -1, p["ct"])
     r(0, 1, p["rin1"])
     r(0, 2, p["rin2"])
-    r(3, None, p["rc1"])
+    r(3, "vreg", p["rc1"])
     r(3, -1, p["rc2"])
-    r(3, None, p["rhys"])
+    r(3, "out1", p["rhys"])
     c(3, -1, p["cnode"])
     r(3, 4, p["rf1"])
     c(4, -1, p["cf1"])
-    r(5, None, p["rh1"])
+    r(5, "vreg", p["rh1"])
     r(5, -1, p["rh2"])
     for node, key in ((1, "cm1n"), (4, "cm1p"), (2, "cm2p"), (5, "cm2n")):
         c(node, -1, p[key])
     c(1, 4, p["dm1"])
     c(2, 5, p["dm2"])
-    return step_response(caps, cond, src)
+    return modes(caps, cond, (src["vreg"], src["out1"]))
 
 
-def deviations(rates, coeffs, vss, nodes):
-    """Each node's step response less its final value, v(t) - vss, on GRID (per volt of VREG)."""
-    ex = [[math.exp(-r * t) for t in GRID] for r in rates]
-    out = []
-    for i in nodes:
-        ci = [-vss[i] * c for c in coeffs[i]]
-        out.append([sum(ci[k] * ex[k][g] for k in range(len(rates))) for g in range(len(GRID))])
-    return out
-
-
-def pos_area(a, b):
-    """Integral over t >= 0 of max(a - b, 0), trapezoids on GRID."""
-    total = 0.0
-    prev_t, prev_d = 0.0, max(a[0] - b[0], 0.0)
-    for t, x, y in zip(GRID, a, b):
-        d = max(x - y, 0.0)
-        total += (t - prev_t) * (d + prev_d) / 2
-        prev_t, prev_d = t, d
-    return total
-
-
-def mean_delay(rates, coeffs, i):
-    """Integral of 1 - S(t), S normalised to its final value: the input's mean delay (Elmore)."""
-    return sum(ck / r for ck, r in zip(coeffs[i], rates))
-
-
-def filter_values():
-    """Each tolerance at its two extremes. Grouped values move together: RS with C_T (both
-    slow V_T), and the tap resistors (all slow the tap)."""
-    lo, hi = 1 - R_TOL, 1 + R_TOL
-    return dict(
-        rs_ct=[(RS * 1e3 * lo, C_T * (1 - C_TOL) + C_T_PAR[0]),
-               (RS * 1e3 * hi, C_T * (1 + C_TOL) + C_T_PAR[1])],
-        rin=[R_IN * 1e3 * (1 - RF_TOL), R_IN * 1e3 * (1 + RF_TOL)],
-        cm=list(C_CM), dm=list(C_DM),
-        tap1=[(RC1 * 1e3 * lo, RC2 * 1e3 * lo, RHYS * 1e3 * (1 - RHYS_TOL), R_F1 * 1e3 * (1 - RF_TOL)),
-              (RC1 * 1e3 * hi, RC2 * 1e3 * hi, RHYS * 1e3 * (1 + RHYS_TOL), R_F1 * 1e3 * (1 + RF_TOL))],
-        cf1=[C_F1 * (1 - C_TOL), C_F1 * (1 + C_TOL)], cnode=list(C_NODE),
-        tap2=[(RH1 * 1e3 * lo, RH2 * 1e3 * lo), (RH1 * 1e3 * hi, RH2 * 1e3 * hi)])
-
-
-def make_p(ntc, rs_ct, rin1, rin2, cm1n, cm1p, dm1, tap1, cf1, cnode, cm2p, cm2n, dm2, tap2):
-    return dict(rs=rs_ct[0], ct=rs_ct[1], ntc=None if ntc is None else ntc * 1e3, rin1=rin1,
-                rin2=rin2, cm1n=cm1n, cm1p=cm1p, dm1=dm1, rc1=tap1[0], rc2=tap1[1], rhys=tap1[2],
-                rf1=tap1[3], cf1=cf1, cnode=cnode, cm2p=cm2p, cm2n=cm2n, dm2=dm2, rh1=tap2[0],
-                rh2=tap2[1])
+def root(fn, t0, f0, t1, f1):
+    """A root of fn between t0 and t1, where fn changes sign (Illinois method)."""
+    side, t = 0, (t0 + t1) / 2
+    for _ in range(60):
+        if f1 == f0:
+            return t
+        t = (t0 * f1 - t1 * f0) / (f1 - f0)
+        ft = fn(t)
+        if ft == 0.0 or t1 - t0 <= 1e-12 * t1:
+            return t
+        if ft * f1 > 0:
+            t1, f1 = t, ft
+            if side == -1:
+                f0 /= 2
+            side = -1
+        else:
+            t0, f0 = t, ft
+            if side == 1:
+                f1 /= 2
+            side = 1
+    return t
 
 
 def unsafe_error(p, comp):
-    """Worst unsafe error (V) between one comparator's inputs, for one set of values, and the
-    mean delays of its two inputs. comp 1: U1, whose tap (IN+) leading means "charge";
-    comp 2: U2, whose V_T input (IN+) leading means "charge"."""
-    rates, coeffs, vss = network(p)
-    lead, lag = (4, 1) if comp == 1 else (2, 5)
-    da, db = deviations(rates, coeffs, vss, (lead, lag))
-    rise, fall = R_RISE * pos_area(da, db), R_FALL * pos_area(db, da)
-    return rise + fall, mean_delay(rates, coeffs, lead), mean_delay(rates, coeffs, lag), rise, fall
+    """Worst unsafe error (V) between one comparator's inputs, for one set of values p.
+
+    Each input follows its final value plus the convolution of D(s), its step response less its
+    final value, with each source's slope. The error between a comparator's inputs, beyond their
+    static difference, is the convolution of Delta = D_a - D_b, where a is the input whose lead
+    means "charge": U1's tap (IN+) against V_T (IN-), and V_T (U2's IN+) against U2's tap (IN-).
+    OUT1 high follows VREG, so its slope is VREG's; OUT1 low is constant. So at each moment the
+    kernel is Delta_H (VREG and OUT1 together) or Delta_L (VREG alone), and with the slope in
+    [-R_FALL, R_RISE] the unsafe error, for any history of VREG and of OUT1's state, is at most
+        integral over s of max(g(Delta_H(s)), g(Delta_L(s))),
+        g(x) = R_RISE * max(x, 0) + R_FALL * max(-x, 0).
+    OUT1's own switching step (at most VREG[2]) adds its step response. Within the range between
+    the two states' final values, that is the hysteresis already in the static trips; any
+    overshoot beyond it is the kick, added here. U2's inputs have no DC path from OUT1, so for
+    U2 the whole transient is kick.
+
+    Every kernel is a sum of exponentials, so the integral is exact between the points where a
+    kernel, or the choice between them, changes sign. Those are found on a grid of T_DECADE
+    points a decade and refined; check_integration() compares a dense trapezoid sum.
+
+    Returns (total, rise part, fall part, kick, OUT1 high alone, OUT1 low alone, mean delay of
+    a, mean delay of b); the mean delays (Elmore) are with OUT1 high."""
+    rates, ((av, vv), (ao, vo)) = network(p)
+    a, b = (4, 1) if comp == 1 else (2, 5)
+    n = len(rates)
+    dl = [av[a][k] - av[b][k] for k in range(n)]        # OUT1 low: VREG alone
+    do = [ao[a][k] - ao[b][k] for k in range(n)]        # OUT1's own step
+    dh = [x + y for x, y in zip(dl, do)]                # OUT1 high: both together
+    s_inf = vo[a] - vo[b]
+    s_top, s_bot = max(0.0, s_inf), min(0.0, s_inf)
+    # Sign changes: Delta_H, Delta_L, and the choice between g(Delta_H) and g(Delta_L).
+    sums = [dh, dl, do, [R_RISE * x + R_FALL * y for x, y in zip(dh, dl)],
+            [R_RISE * y + R_FALL * x for x, y in zip(dh, dl)]]
+    slope_o = [-r * c for r, c in zip(rates, do)]       # OUT1 step response's slope
+
+    def value(c, t):
+        return sum(ck * math.exp(-r * t) for ck, r in zip(c, rates))
+
+    t_lo, t_hi = 0.01 / max(rates), 40 / min(rates)
+    steps = int(math.log10(t_hi / t_lo) * T_DECADE) + 1
+    grid = [0.0] + [t_lo * (t_hi / t_lo) ** (i / steps) for i in range(steps + 1)]
+    # Sign changes smaller than rounding noise are skipped: they enclose no area.
+    noise = [1e-12 * sum(abs(x) for x in c) for c in sums + [slope_o]]
+    prev = None
+    breaks, turns = [], []
+    for t in grid:
+        ex = [math.exp(-r * t) for r in rates]
+        h = sum(c * x for c, x in zip(dh, ex))
+        lo = sum(c * x for c, x in zip(dl, ex))
+        cur = (h, lo, h - lo, R_RISE * h + R_FALL * lo, R_RISE * lo + R_FALL * h,
+               sum(c * x for c, x in zip(slope_o, ex)))
+        if prev is not None:
+            for j in range(6):
+                if prev[j] * cur[j] < 0 and max(abs(prev[j]), abs(cur[j])) > noise[j]:
+                    c = sums[j] if j < 5 else slope_o
+                    tr = root(lambda u: value(c, u), t_prev, prev[j], t, cur[j])
+                    (breaks if j < 5 else turns).append(tr)
+        prev, t_prev = cur, t
+    # Exact integrals between the breaks.
+    edges = [0.0] + sorted(breaks) + [math.inf]
+    ex = [[math.exp(-r * t) if t < math.inf else 0.0 for r in rates] for t in edges]
+    tot = [0.0] * 4              # combined rise, combined fall, OUT1 high alone, OUT1 low alone
+    for i in range(len(edges) - 1):
+        x, y = edges[i], edges[i + 1]
+        if x == 0.0:
+            mid = y / 2 if y < math.inf else t_lo
+        else:
+            mid = 2 * x if y == math.inf else math.sqrt(x * y)
+        h, lo = value(dh, mid), value(dl, mid)
+        wh = R_RISE if h > 0 else -R_FALL
+        wl = R_RISE if lo > 0 else -R_FALL
+        area = [sum(c * (e0 - e1) / r for c, e0, e1, r in zip(cv, ex[i], ex[i + 1], rates))
+                for cv in (dh, dl)]
+        ih, il = wh * area[0], wl * area[1]
+        if wh * h >= wl * lo:
+            tot[0 if h > 0 else 1] += ih
+        else:
+            tot[0 if lo > 0 else 1] += il
+        tot[2] += ih
+        tot[3] += il
+    kick = 0.0
+    for t in turns:
+        s = s_inf + value(do, t)
+        kick = max(kick, s - s_top, s_bot - s)
+    kick *= VREG[2]
+    delay = [-sum((av[i][k] + ao[i][k]) / rates[k] for k in range(n)) / (vv[i] + vo[i])
+             for i in (a, b)]
+    return (tot[0] + tot[1] + kick, tot[0], tot[1], kick, tot[2], tot[3], delay[0], delay[1])
 
 
-def side_cases(comp, ntc, v):
-    """Every tolerance corner of one comparator's side; the other side at both extremes."""
-    if comp == 1:
-        for rs_ct, rin1, cm1n, cm1p, dm1, tap1, cf1, cnode in itertools.product(
-                v["rs_ct"], v["rin"], v["cm"], v["cm"], v["dm"], v["tap1"], v["cf1"], v["cnode"]):
-            for o in (0, 1):
-                yield make_p(ntc, rs_ct, rin1, v["rin"][o], cm1n, cm1p, dm1, tap1, cf1, cnode,
-                             v["cm"][o], v["cm"][o], v["dm"][o], v["tap2"][o])
-    else:
-        for rs_ct, rin2, cm2p, cm2n, dm2, tap2 in itertools.product(
-                v["rs_ct"], v["rin"], v["cm"], v["cm"], v["dm"], v["tap2"]):
-            for o in (0, 1):
-                yield make_p(ntc, rs_ct, v["rin"][o], rin2, v["cm"][o], v["cm"][o], v["dm"][o],
-                             v["tap1"][o], v["cf1"][o], v["cnode"][o], cm2p, cm2n, dm2, tap2)
+def check_integration(p, comp, per_decade=600):
+    """The total of unsafe_error() by a dense trapezoid sum over 10 ps to 1 ms instead."""
+    rates, ((av, vv), (ao, vo)) = network(p)
+    a, b = (4, 1) if comp == 1 else (2, 5)
+    n = len(rates)
+    dl = [av[a][k] - av[b][k] for k in range(n)]
+    dh = [dl[k] + ao[a][k] - ao[b][k] for k in range(n)]
+    total, prev, t_prev = 0.0, None, 0.0
+    for t in [0.0] + [10 ** (-11 + i / per_decade) for i in range(8 * per_decade + 1)]:
+        ex = [math.exp(-r * t) for r in rates]
+        g = []
+        for c in (dh, dl):
+            x = sum(ck * e for ck, e in zip(c, ex))
+            g.append(R_RISE * x if x > 0 else -R_FALL * x)
+        if prev is not None:
+            total += (t - t_prev) * (max(g) + prev) / 2
+        prev, t_prev = max(g), t
+    return total
+
+
+def filter_box():
+    """Each filter value's range (ohms, farads). Every value varies independently (R5-M1)."""
+    lo, hi = 1 - R_TOL, 1 + R_TOL
+    rf, cf = (1 - RF_TOL, 1 + RF_TOL), (1 - C_TOL, 1 + C_TOL)
+    return (("rs", RS * 1e3 * lo, RS * 1e3 * hi),
+            ("ct", C_T * cf[0] + C_T_PAR[0], C_T * cf[1] + C_T_PAR[1]),
+            ("rin1", R_IN * 1e3 * rf[0], R_IN * 1e3 * rf[1]),
+            ("rin2", R_IN * 1e3 * rf[0], R_IN * 1e3 * rf[1]),
+            ("cm1n",) + C_CM, ("cm1p",) + C_CM, ("dm1",) + C_DM,
+            ("rc1", RC1 * 1e3 * lo, RC1 * 1e3 * hi), ("rc2", RC2 * 1e3 * lo, RC2 * 1e3 * hi),
+            ("rhys", RHYS * 1e3 * (1 - RHYS_TOL), RHYS * 1e3 * (1 + RHYS_TOL)),
+            ("rf1", R_F1 * 1e3 * rf[0], R_F1 * 1e3 * rf[1]), ("cf1", C_F1 * cf[0], C_F1 * cf[1]),
+            ("cnode",) + C_NODE, ("cm2p",) + C_CM, ("cm2n",) + C_CM, ("dm2",) + C_DM,
+            ("rh1", RH1 * 1e3 * lo, RH1 * 1e3 * hi), ("rh2", RH2 * 1e3 * lo, RH2 * 1e3 * hi))
+
+
+BOX = filter_box()
+# The U1 point the fifth review exhibited (R5-M1), ohms and farads.
+R5_M1_POINT = dict(rs=11979.0, ct=764e-12, ntc=32166.146873431757, rin1=10100.0, rin2=9900.0,
+                   cm1n=10e-12, cm1p=10e-12, dm1=8e-12, rc1=10017.5, rc2=24257.475,
+                   rhys=3353200.0, rf1=27270.0, cf1=346.5e-12, cnode=0.5e-12, cm2p=10e-12,
+                   cm2n=1e-12, dm2=0.0, rh1=9982.5, rh2=4012.965)
+
+
+def point(u, ntc):
+    """Values at fractions u of each range (0 low end, 1 high end); ntc in ohms, None = open."""
+    p = {name: lo + x * (hi - lo) for (name, lo, hi), x in zip(BOX, u)}
+    p["ntc"] = ntc
+    return p
+
+
+def vertex(bits):
+    return [bits >> j & 1 for j in range(len(BOX))]
+
+
+def ntc_at(f, r_lo, r_hi):
+    return r_lo * (r_hi / r_lo) ** f
+
+
+def _vertex_job(job):
+    """Worker: the N_TOP worst vertices of one block at one NTC value, and the mean delays."""
+    comp, ntc, start, stop = job
+    top, lead, lag = [], [], []
+    for bits in range(start, stop):
+        e = unsafe_error(point(vertex(bits), ntc), comp)
+        top.append((e[0], bits))
+        lead.append(e[6])
+        lag.append(e[7])
+    return heapq.nlargest(N_TOP, top), (min(lead), max(lead)), (min(lag), max(lag))
+
+
+def _point_job(job):
+    comp, u, ntc = job
+    return unsafe_error(point(u, ntc), comp)
+
+
+def _ascent_job(job):
+    """Worker: coordinate ascent from u (and the NTC at fraction f of the band), first over a
+    grid of eighths of each range, then in halving steps around the best point."""
+    comp, u, f, r_lo, r_hi = job
+    x = list(u) + [f]
+
+    def ev(y):
+        return unsafe_error(point(y[:-1], ntc_at(y[-1], r_lo, r_hi)), comp)[0]
+
+    best, grid_done = ev(x), False
+    for step in [None] * 4 + [1 / 16, 1 / 32, 1 / 64, 1 / 128]:
+        if step is None and grid_done:
+            continue
+        improved = False
+        for j in range(len(x)):
+            values = [i / 8 for i in range(9)] if step is None else \
+                [min(1.0, max(0.0, x[j] + s)) for s in (-step, step)]
+            for v in values:
+                y = x[:]
+                y[j] = v
+                e = ev(y)
+                if e > best * (1 + 1e-9):
+                    best, x, improved = e, y, True
+        grid_done = step is None and not improved
+    return best, x
 
 
 def ntc_band(t_lo, t_hi):
@@ -395,69 +560,97 @@ def ntc_band(t_lo, t_hi):
     return lo, hi
 
 
-def filter_check(c_band, h_band, f_cold, f_hot, vfl):
-    """Worst error between each comparator's inputs while VREG moves, in volts.
+def filter_check(pool, c_band, h_band, f_cold, f_hot, vfl):
+    """Largest error found between each comparator's inputs while VREG moves, in volts.
 
-    Each input follows v(t) = vss + integral of D(s) VREG'(t - s) ds, where D(s) is its step
-    response less its final value (per volt of VREG). The error between a comparator's inputs,
-    beyond their static difference, is e(t) = integral of (D_a - D_b)(s) VREG'(t - s) ds. With
-    -R_FALL <= VREG' <= R_RISE at every moment, its worst unsafe value is
-        R_RISE * integral (D_a - D_b)+ + R_FALL * integral (D_b - D_a)+,
-    where a is the input whose lead means "charge": U1's tap (IN+) against V_T (IN-), and V_T
-    (U2's IN+) against U2's tap (IN-). This holds for any VREG history inside those slopes:
-    short dips, restarts and charge left on the capacitors included.
+    unsafe_error() bounds the error for one set of values. The values are then searched, each
+    independently over its own range (R5-M1):
+      1. every vertex of the 18-value box (2^18) at the NTC values of the band's two ends and
+         its middle;
+      2. the N_TOP worst vertices at N_NTC NTC values across the band;
+      3. N_ASCENT local ascents into the interior, NTC included, from the worst points so far;
+      4. N_RANDOM random points of the box and band (fixed seeds).
+    This is a search: it doesn't prove that nothing larger exists. So the trips carry
+    FILTER_ALLOWANCE times the largest error found (err); main() checks that the shift stays
+    inside BAND_K.
 
-    The error counts where the decision is close: NTC values across each trip band (c_band,
-    h_band, deg C) widened by BAND_K; main() checks that the resulting shift stays inside
-    BAND_K. Beyond the band, on the side where the comparator says "do not charge", the static
-    distance from its trip must exceed the error: checked in 5 % steps of NTC resistance over
-    a factor of 3, and at open (U1) or nearly shorted (U2).
-
-    Values: every tolerance corner of one comparator's side with the other side at both
-    extremes, then N_RANDOM random interior points (fixed seed)."""
-    v = filter_values()
-    rng = random.Random(4)
+    The band is each trip band (c_band, h_band, deg C) widened by BAND_K. Beyond it, on the side
+    where the comparator says "do not charge", the static distance from its trip must exceed
+    the allowed error: checked in 5 % steps of NTC resistance over a factor of 3, and at open
+    (U1) or nearly shorted (U2), for the N_TOP worst vertices; at the last of these, every
+    vertex."""
+    n_box = 2 ** len(BOX)
+    blocks = 64
+    size = n_box // blocks
     out = {}
     for comp, band, f_tap in ((1, c_band, f_cold), (2, h_band, f_hot)):
-        r_lo, r_hi = ntc_band(band[0] - BAND_K, band[1] + BAND_K)
-        inside = [r_lo * (r_hi / r_lo) ** (i / 4) for i in range(5)]
+        r_lo, r_hi = (x * 1e3 for x in ntc_band(band[0] - BAND_K, band[1] + BAND_K))
+        # 1. Every vertex at three NTC values.
+        jobs = [(comp, ntc_at(f, r_lo, r_hi), i * size, (i + 1) * size)
+                for f in (0.0, 0.5, 1.0) for i in range(blocks)]
+        worst, lead, lag = {}, [], []
+        for (top, ld, lg), job in zip(pool.map(_vertex_job, jobs), jobs):
+            lead += ld
+            lag += lg
+            for e, bits in top:
+                if e > worst.get(bits, (0.0,))[0]:
+                    worst[bits] = (e, job[1])
+        top = heapq.nlargest(N_TOP, ((e, bits) for bits, (e, _) in worst.items()))
+        vertex_max = top[0][0]
+        # 2. The worst vertices across the band.
+        fr = [i / (N_NTC - 1) for i in range(N_NTC)]
+        cand = [(bits, f) for _, bits in top for f in fr]
+        res = pool.map(_point_job, [(comp, vertex(bits), ntc_at(f, r_lo, r_hi)) for bits, f in cand], 16)
+        found = [(e[0], bits, f) for e, (bits, f) in zip(res, cand)]
+        ntc_max = max(found)[0]
+        # 3. Local ascents from the worst distinct vertices.
+        starts, seen = [], set()
+        for e, bits, f in sorted(found, reverse=True):
+            if bits not in seen:
+                seen.add(bits)
+                starts.append((comp, vertex(bits), f, r_lo, r_hi))
+            if len(starts) == N_ASCENT:
+                break
+        ascents = pool.map(_ascent_job, starts, 1)
+        ascent_max, ascent_x = max(ascents)
+        # 4. Random points.
+        jobs = []
+        for i in range(N_RANDOM):
+            rng = random.Random(i)
+            u = [rng.random() for _ in BOX]
+            jobs.append((comp, u, ntc_at(rng.random(), r_lo, r_hi)))
+        random_max = max(e[0] for e in pool.map(_point_job, jobs, 50))
+        best = max(vertex_max, ntc_max, ascent_max, random_max)
+        detail = _point_job((comp, ascent_x[:-1], ntc_at(ascent_x[-1], r_lo, r_hi)))
+        err = FILTER_ALLOWANCE * best
+
+        # Beyond the band: static distance from the trip, at the falling floor, against the
+        # allowed error.
         outside = [r_hi * 1.05 ** k for k in range(1, 24)] + [None] if comp == 1 else \
             [r_lo * 0.95 ** k for k in range(1, 24)] + [r_lo * 0.1, r_lo * 0.03]
-        worst, parts, n = 0.0, (0.0, 0.0), 0
-        d_lead, d_lag = [], []
-        for ntc in inside:
-            for p in side_cases(comp, ntc, v):
-                e, a, b, rise, fall = unsafe_error(p, comp)
-                if e > worst:
-                    worst, parts = e, (rise, fall)
-                d_lead.append(a)
-                d_lag.append(b)
-                n += 1
-        corner = worst
-        for _ in range(N_RANDOM):
-            ntc = r_lo + rng.random() * (r_hi - r_lo)
-            pick = [x[0] + rng.random() * (x[1] - x[0]) if not isinstance(x[0], tuple) else
-                    tuple(a + rng.random() * (b - a) for a, b in zip(*x))
-                    for x in (v["rs_ct"], v["rin"], v["rin"], v["cm"], v["cm"], v["dm"], v["tap1"],
-                              v["cf1"], v["cnode"], v["cm"], v["cm"], v["dm"], v["tap2"])]
-            e = unsafe_error(make_p(ntc, *pick), comp)
-            if e[0] > worst:
-                worst, parts = e[0], e[3:]
-        # Beyond the band: static distance from the trip, at the falling floor, against the error.
-        least = None
-        for ntc in outside:
-            e = max(unsafe_error(p, comp)[0] for p in side_cases(comp, ntc, v))
+        jobs = [(comp, vertex(bits), ntc) for ntc in outside for _, bits in top]
+        errs = [e[0] for e in pool.map(_point_job, jobs, 16)]
+        far = [(comp, outside[-1], i * size, (i + 1) * size) for i in range(blocks)]
+        far_max = max(t[0][0][0] for t in pool.map(_vertex_job, far))
+        least, ratio = None, None
+        for i, ntc in enumerate(outside):
+            e = max(errs[i * len(top):(i + 1) * len(top)])
+            if i == len(outside) - 1:
+                e = max(e, far_max)
             if comp == 1:
-                f_t = 1.0 if ntc is None else ntc / (RS * (1 + R_TOL) + ntc)
+                f_t = 1.0 if ntc is None else ntc / (RS * 1e3 * (1 + R_TOL) + ntc)
                 dist = (f_t - f_tap) * vfl
             else:
-                f_t = ntc / (RS * (1 - R_TOL) + ntc)
+                f_t = ntc / (RS * 1e3 * (1 - R_TOL) + ntc)
                 dist = (f_tap - f_t) * vfl
             dist -= VOS_MAX + VHYS[2] / 2
-            least = dist - e if least is None else min(least, dist - e)
-        out[comp] = dict(err=worst, corner=corner, parts=parts, n=n, band=(r_lo, r_hi),
-                         lead=(min(d_lead), max(d_lead)), lag=(min(d_lag), max(d_lag)),
-                         outside=outside, least=least)
+            margin = dist - FILTER_ALLOWANCE * e
+            least = margin if least is None else min(least, margin)
+            ratio = dist / e if ratio is None else min(ratio, dist / e)
+        out[comp] = dict(err=err, best=best, vertex=vertex_max, ntc=ntc_max, ascent=ascent_max,
+                         random=random_max, detail=detail, x=ascent_x, n=3 * n_box,
+                         band=(r_lo / 1e3, r_hi / 1e3), lead=(min(lead), max(lead)),
+                         lag=(min(lag), max(lag)), least=least, ratio=ratio, far=far_max)
     return out
 
 
@@ -474,7 +667,7 @@ def rev3_check():
         cond[k][k] = g_i
         cond[0][k] = cond[k][0] = -g_i
     caps = [[tiny, 0, 0], [0, 1e-9, 0], [0, 0, 1e-9]]
-    rates, _, _ = step_response(caps, cond, [g_s, 0, 0])
+    rates, _ = modes(caps, cond, [[g_s, 0, 0]])
     th = par(par(RC1, RC2), RHYS) * 1e3
     tap = (20e3 + th) * 1e-9
     return 1 / min(rates), tap
@@ -552,7 +745,8 @@ def main():
     # The fraction of VREG at each comparator's inputs near its trip, highest corner.
     f_cold = RC2 * (1 + R_TOL) / (RC2 * (1 + R_TOL) + par(RC1 * (1 - R_TOL), RHYS * (1 - RHYS_TOL)))
     f_hot = RH2 * (1 + R_TOL) / (RH2 * (1 + R_TOL) + RH1 * (1 - R_TOL))
-    flt = filter_check(c_trip, h_trip, f_cold, f_hot, vfl)
+    with multiprocessing.Pool() as pool:
+        flt = filter_check(pool, c_trip, h_trip, f_cold, f_hot, vfl)
     err_c_k = flt[1]["err"] / (vfl * slope_per_k(c_trip))
     err_h_k = flt[2]["err"] / (vfl * slope_per_k(h_trip))
     th_c = [par(RS, r_ntc(t, k) * (1 + d)) for t in c_trip for k in (0, 2)
@@ -618,22 +812,43 @@ def main():
           f"{C_DM[0] * 1e12:.0f}-{C_DM[1] * 1e12:.0f} pF between the two; U1's tap node "
           f"{C_NODE[0] * 1e12:.1f}-{C_NODE[1] * 1e12:.0f} pF (assumed)")
     print(f"  VREG slope: rise <= {I_LDO_LIMIT_A * 1000:.0f} mA / {C_VREG_MIN * 1e6:.0f} uF = "
-          f"{R_RISE / 1000:.0f} V/ms; fall <= {I_VREG_MAX_MA} mA / {C_VREG_MIN * 1e6:.0f} uF = "
+          f"{R_RISE / 1000:.1f} V/ms; fall <= {I_VREG_MAX_MA} mA / {C_VREG_MIN * 1e6:.0f} uF = "
           f"{R_FALL:.0f} V/s (load {vreg_load_ma(VREG[2], True):.3f} mA at {VREG[2]} V with every gate "
           f"charging, {vreg_load_ma(VREG[2]):.3f} mA steady)")
-    print(f"  Solved as one coupled network, for any VREG history inside those slopes:")
+    print(f"  Solved as one coupled network, for any VREG history inside those slopes and either "
+          f"OUT1 state at every moment (RHYS to VREG or to AGND), plus OUT1's switching kick")
     for comp, name, k, lead, lag in ((1, "U1", err_c_k, "IN+ (tap)", "IN- (V_T)"),
                                      (2, "U2", err_h_k, "IN+ (V_T)", "IN- (tap)")):
         f = flt[comp]
-        print(f"  {name}: NTC {f['band'][0]:.2f}-{f['band'][1]:.2f} k (trip band +-{BAND_K} K), "
-              f"{f['n']} tolerance corners plus {N_RANDOM} random points. Mean delays {lead} "
-              f"{f['lead'][0] * 1e6:.3f}-{f['lead'][1] * 1e6:.3f} us, {lag} {f['lag'][0] * 1e6:.3f}-"
-              f"{f['lag'][1] * 1e6:.3f} us")
-        print(f"    worst error {f['err'] * 1000:.3f} mV ({f['parts'][0] * 1000:.3f} mV from the rise "
-              f"term, {f['parts'][1] * 1000:.3f} mV from the fall term) = {k:.3f} K at {vfl:.3f} V "
-              f"(corners alone {f['corner'] * 1000:.3f} mV; included above). Beyond the band, toward "
-              f"{'open' if comp == 1 else 'short'}: static distance exceeds the error by >= "
-              f"{f['least'] * 1000:.0f} mV")
+        w = f["detail"]
+        print(f"  {name}: NTC {f['band'][0]:.2f}-{f['band'][1]:.2f} k (trip band +-{BAND_K} K). Searched, "
+              f"every value independent: all {2 ** len(BOX)} vertices at 3 NTC values ({f['n']}), the "
+              f"{N_TOP} worst at {N_NTC} NTC values, {N_ASCENT} local ascents, {N_RANDOM} random points")
+        print(f"    largest error found {f['best'] * 1000:.4f} mV: vertices {f['vertex'] * 1000:.4f}, "
+              f"across the band {f['ntc'] * 1000:.4f}, ascents {f['ascent'] * 1000:.4f}, random "
+              f"{f['random'] * 1000:.4f} mV")
+        print(f"    at the ascents' best point: rise term {w[1] * 1000:.4f}, fall term {w[2] * 1000:.4f}, "
+              f"kick {w[3] * 1000:.4f} mV; OUT1 high alone {w[4] * 1000:.4f}, OUT1 low alone "
+              f"{w[5] * 1000:.4f} mV")
+        ends = [(n, x) for (n, _, _), x in zip(BOX, f["x"])]
+        print(f"    there: high end {', '.join(n for n, x in ends if x == 1) or '-'}; low end "
+              f"{', '.join(n for n, x in ends if x == 0) or '-'}; inside "
+              f"{', '.join(f'{n} {x:.3f}' for n, x in ends if 0 < x < 1) or '-'}; NTC at "
+              f"{f['x'][-1]:.3f} of the band")
+        print(f"    in the trips: {FILTER_ALLOWANCE:.0f} x {f['best'] * 1000:.4f} = {f['err'] * 1000:.4f} mV "
+              f"= {k:.4f} K at {vfl:.3f} V. Mean delays {lead} {f['lead'][0] * 1e6:.3f}-"
+              f"{f['lead'][1] * 1e6:.3f} us, {lag} {f['lag'][0] * 1e6:.3f}-{f['lag'][1] * 1e6:.3f} us")
+        print(f"    Beyond the band, toward {'open' if comp == 1 else 'short'}: static distance exceeds "
+              f"the allowed error by >= {f['least'] * 1000:.0f} mV, and is >= {f['ratio']:.0f} times the "
+              f"error found (every vertex at the far end: {f['far'] * 1000:.3f} mV)")
+        print(f"    Integration check at that point: exact {w[0] * 1000:.5f} mV less kick "
+              f"{(w[0] - w[3]) * 1000:.5f} mV, trapezoid at 600 points a decade "
+              f"{check_integration(point(f['x'][:-1], ntc_at(f['x'][-1], *[x * 1e3 for x in f['band']])), comp) * 1000:.5f} mV")
+    e = unsafe_error(R5_M1_POINT, 1)
+    print(f"  R5-M1's U1 point (ntc {R5_M1_POINT['ntc']:.0f} ohm): OUT1 high alone {e[4] * 1000:.4f} mV, "
+          f"either state {e[0] * 1000:.4f} mV. With revision 4's 10 uF (both slopes x "
+          f"{C_VREG_MIN / 10e-6:.1f}; no kick here) OUT1 high alone is {e[4] * C_VREG_MIN / 10e-6 * 1000:.4f} mV: "
+          f"the review got 0.904692 at 60 points a decade, 0.904403 at 600")
     old_t, old_tap = rev3_check()
     print(f"  Check, revision 3 solved as one network at 0 C (nominal NTC): V_T inputs' slowest time "
           f"constant {old_t * 1e6:.3f} us against U1's tap {old_tap * 1e6:.3f} us, so its ordering "
@@ -688,6 +903,7 @@ def main():
           f"{(ov[0] - flt_t[1]) * 1000:.0f} mV")
     assert vreg_load_ma(VREG[2], True) <= I_VREG_MAX_MA
     assert max(err_c_k, err_h_k) < BAND_K and flt[1]["least"] > 0 and flt[2]["least"] > 0
+    assert min(fall["c_off"]) - sc_c - err_c_k >= 0 and max(fall["h_off"]) + GRADIENT_K + err_h_k <= 45
 
 
 if __name__ == "__main__":

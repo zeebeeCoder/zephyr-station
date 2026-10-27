@@ -1,0 +1,13 @@
+Output of surge_bound.py for F1 revision 5, run 27.10.2026 (computed, not measured).
+surge_bound.py SHA-256: afa94fe73151edf88c115e9dcc8509f7e79e2e1d9fcff017610122f0d03f9d0c
+
+$ python3 -I docs/calc/surge_bound.py
+SM15T33CA at 11.3 A (ST note 3): 45.7 - 0.333 x (33.0 - 11.3) = 38.4739 V from Tj 25 C
+Self-heating: <= 0.745 J a pulse, once in 60 s, through 75 K/W: +0.93 K mean, so Tj starts at <= 51 C
+From Tj 51 C (ST note 2): x (1 + 0.00098 x 26) = 39.4542 V
+TPS26600 IN: + 10 nH x 1.13 A/us = 39.4655 V -> IN <= 39.47 V (either polarity; rated 62 V, -60 V)
+LT3652 VIN: + 12.3 A x sqrt(5 nH / 10 uF) = +0.2750 V -> VIN <= 39.75 V (rated 40 V absolute; margin 0.25 V)
+  sqrt(L/C) <= 22.4 mOhm, e.g. 5 nH with 10 uF or 10 nH with 20 uF
+TPS7B6933 input (through its diode and 1 kOhm, no Zener credited): <= 39.47 V (operating <= 40 V, 45 V for 200 ms)
+Pulse rating from Tj 51 C (Rev 4 Figure 1): 89.6 % of 1500 W = 1344 W, 29.6 A; the defined pulse is <= 446 W (33 %), 11.3 A (38 %)
+Cold breakdown at -30 C: >= 31.4 x (1 - 0.00098 x 55) = 29.71 V, above the cold Voc 28 V
