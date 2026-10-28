@@ -1,0 +1,179 @@
+{
+ "checks": [
+  {
+   "statement": "Box outline: inside 210 x 130 x 70, wall 2.4, land 230 x 150, 14 lid screws on a 234 x 154 rectangle (long-side pitch 58.5, short-side pitch 51.3), ears to 242 x 162",
+   "verdict": "confirmed",
+   "fix": "",
+   "evidence": "Arithmetic re-done: 210+2x10=230, 130+2x10=150; 210+2x12=234, 130+2x12=154; 234/4=58.5, 154/3=51.3; 5+5+4+4-4 corners = 14 screws; 234+8=242, 154+8=162; depth 70+2.4=72.4.",
+   "source": "calc (brief section 2.1)"
+  },
+  {
+   "statement": "Groove 4.0 wide x 2.2 deep for 3.0 mm cord: 0.8 mm = 27 % squeeze, 80 % fill, centreline R9, cord about 705 mm",
+   "verdict": "confirmed",
+   "fix": "",
+   "evidence": "0.8/3.0 = 26.7 %; pi x 1.5^2 / (4.0 x 2.2) = 7.07/8.8 = 80 %. A worked example for a 3.00 mm cord uses a 2.25 mm gland height (25 %) with 20-30 % static face-seal squeeze; BS 4518 static widths for 3.0 mm are 3.7-3.9, so 4.0 is in range. Centreline 220 x 140 with R9 corners: 2(220+140) - 8x9 + 2 x pi x 9 = 704.5 mm.",
+   "source": "jlcmc.com/blog/o-ring-groove-design-guide; roymech.org/Useful_Tables/Seals/O_Rings; calc"
+  },
+  {
+   "statement": "Closure: lid land meets box land, so geometry sets the squeeze, not torque (3.2 mm ASA lid, screws 58.5 mm apart, 70 Shore A solid cord)",
+   "verdict": "corrected",
+   "fix": "The hard stop holds only if the lid does not bow between screws. A 70 Shore A 3 mm cord at 27 % squeeze pushes back with roughly 1.5-3.5 N/mm. A 3.2 mm lid strip with its 1.6 x 4 lip (I about 139 mm^4, E about 1.8 GPa) bows 0.2-0.4 mm between screws if the screws act as fixed ends, and 0.9-2.1 mm if they act as pinned ends. The squeeze is only 0.8 mm. Fixes: make the lid at least 4.5 mm thick with a continuous perimeter rib at least 6 mm deep outside the groove, or cut the screw pitch to about 40 mm, or use a softer cord (50-60 Shore A or EPDM sponge). In test 7.4, use a printed lid section with the real screw pitch, not 'a flat plate'.",
+   "evidence": "Beam check (calc), using a cord force taken from the usual O-ring compression-force charts (not looked up): q L^4/(384 E I) with q = 1.5-3.5 N/mm and L = 58.5 gives 0.18-0.43 mm with fixed ends and 0.9-2.1 mm with pinned ends, against 0.8 mm of squeeze. ASA creep in summer heat makes this worse.",
+   "source": "calc"
+  },
+  {
+   "statement": "Heat-set insert M3 x 5.7 (OD 4.6), hole Ø4.1 straight 6.7 deep, Ø8 bosses, minimum wall 1.6",
+   "verdict": "confirmed",
+   "fix": "",
+   "evidence": "The ruthex M3 table gives D1 4.6 (OD), D3 4.0 (hole), L 5.7, minimum wall 1.6. Ø4.1 is 4.0 plus the 0.1 rule. Wall in a Ø8 boss = (8-4.1)/2 = 1.95 mm, which is at least 1.6.",
+   "source": "https://www.3djake.com/ruthex/threaded-insert-m3-100-pieces"
+  },
+  {
+   "statement": "Roof fixing: 4 x M3 x 35 A2 screws from the top through the cap legs (front legs 20 mm, back legs 25 mm, plate 3.0) into rib inserts in 6.7 mm blind holes",
+   "verdict": "corrected",
+   "fix": "Front legs: M3 x 30. Back legs: M3 x 35. With M3 x 35 at the front, the stack is washer 0.5 + plate about 3.05 + leg 20 = 23.6 mm, which leaves 11.4 mm of thread for a 6.7 mm blind hole. The screw bottoms out before it clamps. Drilling deeper would go through the 8 mm rib and the 2.4 mm sealed top wall.",
+   "evidence": "Front: 35 - 23.6 = 11.4 mm, more than 6.7 (and more than the 8 mm rib). With M3 x 30: 6.4 mm of engagement. Back: 35 - 28.6 = 6.4 mm, fine.",
+   "source": "calc"
+  },
+  {
+   "statement": "Screws M3 x 12 A2 for the battery retainer and the PMS hood ears, into M3 x 5.7 inserts in 6.7 mm blind holes",
+   "verdict": "corrected",
+   "fix": "Retainer (2 mm plate): use M3 x 8 (about 5.5 mm of engagement). Hood ears: make each ear about 5.5 mm thick where the screw passes, or use M3 x 10. As specified, an M3 x 12 through a 2 mm plate needs 9.5 mm of hole and bottoms out in the 6.7 mm blind hole.",
+   "evidence": "12 - 2 - 0.5 washer = 9.5 mm, more than 6.7. Hood ear thickness is not given, so the same check applies to it.",
+   "source": "calc"
+  },
+  {
+   "statement": "Roof air gap at least 20 mm everywhere, open on 4 sides; 20 mm also clears the 13.6 mm screw ears",
+   "verdict": "corrected",
+   "fix": "Legs stand on the 8 mm top ribs, and leg heights are measured from the rib top to the plate underside. The underside then sits 28 mm above the top wall at Z 40, 22.1 mm at the lid face (Z 73.2) and 17.8 mm at the front edge. Over the box and lid ears (top at 13.6 mm) the clear gap is only about 8.5 mm at the lid end. Keep the underside ribs at 5 mm or less, or end them before Z 46. If the legs stood directly on the wall, the gap at the lid face would be 14.7 mm and the lid ears would almost touch the roof (about 0.5 mm).",
+   "evidence": "28 - (Z-40) x tan 10° gives 22.7 at Z 70, 22.1 at Z 73.2 and 17.8 at Z 98. Ear top is 132.4 + 13.6 = 146; the underside at Z 73.2 is at 154.5, so the gap is 8.5 mm.",
+   "source": "calc"
+  },
+  {
+   "statement": "Lapp SKINTOP ST-M M12x1.5 black 53111200: clamps 3.5-7 mm, wrench 15, 8 mm thread, black is the UV-rated version, -40 to +100 °C, IP68/IP69",
+   "verdict": "confirmed",
+   "fix": "",
+   "evidence": "Lapp table: 53111200 black, M12x1.5, 3.5-7, SW 15, length 30, thread 8. 'Black (RAL 9005), UV-resistant.' Fixed -40 to +100 °C; dynamic -20 to +100 °C. IP68 5 bar, IP69. (A 53010000 M12 ISO version with a 15 mm thread exists if a thicker stack is ever needed.)",
+   "source": "https://products.lappgroup.com/online-catalogue/cable-glands/skintop-cable-glands-plastic-metric/standard/skintop-st-m.html"
+  },
+  {
+   "statement": "Lapp ST-M M16 (53111210) clamps 4.5-10 mm, wrench 19; gland wrench circles Ø24 (M12) / Ø28 (M16) at 25 mm spacing",
+   "verdict": "corrected",
+   "fix": "M16 (53111210, black) clamps 4-10 mm, wrench 19, 8 mm thread. If the M16 option is used at (193, 15), its Ø28 wrench circle overlaps the anemometer gland's Ø24 circle at (168, 15) by 1 mm (180 vs 179). Move the Cat5e gland to X 195 or more, or the anemometer gland to X 166 or less.",
+   "evidence": "Lapp table lists 53111210 black M16x1.5 at 4-10 mm, SW 19. 168 + 12 = 180 is more than 193 - 14 = 179.",
+   "source": "Lapp ST-M catalogue page; calc"
+  },
+  {
+   "statement": "Gland stack: 2.4 mm floor + 1 mm outside sealing washer + SKINDICHT SM-M locknut (2.8-4.7 mm) fits the 8 mm ST-M thread",
+   "verdict": "confirmed",
+   "fix": "",
+   "evidence": "SM-M 12x1.5 locknuts: Lapp gives SW 15 and 2.8 mm (INOX 52032585); a distributor gives 3 mm (52103000LF). 2.4 + 1 + 3 = 6.4 mm, which is less than the 8 mm thread. The brief's upper value (4.7) would leave only 0.3 mm, so do not use the thicker nut types with a washer.",
+   "source": "https://e.lapp.com/apac/p/lock-nuts/skindicht-sm-m-12x1-5-inox-52032585; element14 52103000LF"
+  },
+  {
+   "statement": "Gland holes Ø12.3 (M12) / Ø16.3 (M16) in CAD",
+   "verdict": "unsupported",
+   "fix": "",
+   "evidence": "Lapp's ST-M page gives no entry-hole size; it refers to 'Appendix T21 for the installation dimensions'. Not verified. Keep it as a test-coupon value.",
+   "source": "Lapp ST-M catalogue page"
+  },
+  {
+   "statement": "SMA(f) bulkhead D-hole: cutout Ø6.5 with 5.85 flat (CAD 6.6 / 5.95); maximum panel thickness 2.8-4.4 mm, so the 2.4 mm floor is fine",
+   "verdict": "corrected",
+   "fix": "The D-cut differs between bulkhead parts: the WE part uses about 6.5 with a 5.85 flat, the Fairview FMAD10064 recommends about 7.32 mm, and the L-com BA21 uses a .300 in (7.6 mm) D-hole. Make the D-hole a Fusion parameter (sma_D, sma_flat), take it from the drawing of the pigtail actually bought (Taoglas CAB.01052 or a generic one), and confirm it on the coupon. The 2.4 mm floor is within every maximum panel thickness found (about 4.1 mm for the Fairview part).",
+   "evidence": "Search results: the Fairview FMAD10064 drawing gives a .288 in hole and .162 in maximum panel thickness; L-com uses a .300 in single D. The brief pins the WE cutout but buys a Taoglas-class pigtail.",
+   "source": "fairviewmicrowave.com FMAD10064_2D; lists.l-com.com SMA bulkhead D-hole"
+  },
+  {
+   "statement": "Gore PolyVent Standard M12x1.5 black PMF100320 + counter nut M10510-009: 450 ml/min at 70 mbar, through-hole 12.2 ± 0.1, torque 0.7 ± 0.1 Nm",
+   "verdict": "corrected",
+   "fix": "Values confirmed, but model the vent hole at 12.2 nominal. Do not apply the global +0.1 rule here, because 12.3 is already at Gore's tolerance limit. The vent wrench is 16 mm. Counter nut M10510-009 is grey plastic. One older copy of the datasheet gives 1.0 ± 0.4 Nm; use 0.7 Nm from the 2025 sheet.",
+   "evidence": "Gore tables: PMF100320 black, PMF100321 grey, 450 ml/min at 70 mbar, SW 16, 12.2 ± 0.1 hole, 0.7 ± 0.1 Nm (another copy gives 1.0 ± 0.4), counter nut M10510-009 grey.",
+   "source": "https://kr.gore.com/system/files/2025-04/gore-ptv-screwin-datasheet-en.pdf (via search snippets); docs.rs-online.com copies"
+  },
+  {
+   "statement": "ESP32 PCB antenna keep-out: 15 mm in every direction (Espressif)",
+   "verdict": "confirmed",
+   "fix": "",
+   "evidence": "Espressif: 'A clearance of at least 15 mm is recommended in all directions'. Preferred placement is antenna outside the base board; otherwise cut away the board on both sides and below.",
+   "source": "https://docs.espressif.com/projects/esp-hardware-design-guidelines/en/latest/esp32/pcb-layout-design.html"
+  },
+  {
+   "statement": "Antenna 'overhangs the edge, or sits flush'; keep-out about Y 93-130 with 15 mm to the top inner wall; roof screws at least 31 mm and mounting tabs at least 40 mm from the antenna",
+   "verdict": "corrected",
+   "fix": "The layout works only with the antenna flush at the PCB top edge (Y 115). If the module overhangs the edge (Espressif's preferred option, about 6-7 mm), its tip reaches Y of about 121.5 and only about 8.5 mm is left to the top wall. In that case lower the PCB by the overhang (pcb_Y0 = 28) or define the keep-out body from the antenna tip. Corrected distances: the roof screw/insert at (200, 133-140, 12) is about 25 mm from the antenna when flush and about 21 mm when overhanging, not 31. The M4 tab bolt at (219, 120) is about 37 mm away, not 40. Both still meet 15 mm.",
+   "evidence": "Antenna X 165-183, Y 108-115, Z about 16.6-19.7. Distance to (200, 134, 12): sqrt(17² + 19² + 4.6²) = 25.9. Distance to the tab bolt: sqrt(36² + 5² + 8²) = 37.",
+   "source": "calc; Espressif guide"
+  },
+  {
+   "statement": "Every part fits a 256 mm bed in one piece; shield louvre plates Ø120 with a 5 mm brim, '4 plates per print'",
+   "verdict": "refuted",
+   "fix": "Print shield plates 3 per plate at most (7 plates = 3 + 2 + 2 or 3 + 3 + 1), placed away from the front-left corner. Four Ø130 footprints (Ø120 + 2 x 5 mm brim) need 260 x 260 even before any margin. The P1S profile also excludes an 18 x 28 mm area at the front-left corner (the X1/P1 common profile excludes 28 x 28 plus an 8 mm strip). The box with brim (248 x 168) must be placed clear of that corner. It fits.",
+   "evidence": "Bambu Studio P1S 0.4 profile: bed_exclude_area 0x0, 18x0, 18x28, 0x28; printable 256 x 256. A circle at (65, 65) with r 65 reaches (18, 28), which is 59.8 mm from its centre.",
+   "source": "https://raw.githubusercontent.com/bambulab/BambuStudio/master/resources/profiles/BBL/machine/Bambu%20Lab%20P1S%200.4%20nozzle.json; fdm_bbl_3dp_001_common.json"
+  },
+  {
+   "statement": "Shrinkage: set filament 'Shrinkage (XY)' = measured / designed x 100; expect about 99.3-99.6 % for ASA; do not scale the CAD",
+   "verdict": "confirmed",
+   "fix": "",
+   "evidence": "Bambu wiki: shrinkage = measured / designed x 100 (100 mm printing at 94 mm gives 94 %); default 100 %. A MakerWorld calibration lists Bambu ASA at 99.30 %.",
+   "source": "https://wiki.bambulab.com/en/knowledge-sharing/3d-prints-shrinkage (via search); makerworld.com/en/models/1090467"
+  },
+  {
+   "statement": "Shield cone: OD 120 / ID 72, 40° slope, drop 20.1 = pitch, clear gap 16.9 / 12.9, boss height 16.9, 'no straight line of sight to the centre'",
+   "verdict": "corrected",
+   "fix": "The numbers stand. Replace the claim with: 'no direct line of sight from above or from the horizontal. Rays rising at about 40° (parallel to the cones), such as light reflected from snow, still reach the centre.'",
+   "evidence": "24 x tan 40° = 20.14; 2.4/cos 40° = 3.13; 20 - 3.13 = 16.87; 16.87 x cos 40° = 12.9. A ray entering at plate k - 30 at r 60 and rising to k - 10 at r 36 (slope 39.8°) clears both plates at every radius.",
+   "source": "calc"
+  },
+  {
+   "statement": "Radiation shield on the N side (0°) on a 160 mm arm, 'below the box', with the box on the NE side (lid facing 53°)",
+   "verdict": "corrected",
+   "fix": "In plan view, the 242 mm box on the NE side covers azimuths of about 339° to 101° out to about 165 mm from the mast axis. The shield axis at 0° and about 177 mm sits about 21 mm from the box's NW-front corner, so the shield is directly under the NW end of the box. The 868 MHz antenna (floor bulkhead at X 193) hangs about 59 mm from the shield axis, inside the Ø130 roof outline, with only about 35 mm vertical clearance to the roof top. The box will drip onto the shield and block its sky view. Either rotate the arm to about 300° or confirm clearance in a plan-view assembly sketch before CAD.",
+   "evidence": "Plan-view calc with the box back face about 35 mm from the mast axis: NW-front corner at (16, 163) mm, azimuth 5°; shield axis at (0, 177); SMA position about 59 mm from the shield axis.",
+   "source": "calc"
+  },
+  {
+   "statement": "Solar panel centre at about 2.0 m on the SW side, 'so its shadow covers the box in the afternoon' (box 1.90-2.04 m on the NE side)",
+   "verdict": "corrected",
+   "fix": "With the panel at box height, its shadow falls below the box at most sun elevations. At 45° elevation and 0.2 m horizontal separation, the shadow centre drops to about 1.80 m, under the 1.90 m floor. To shade the box, put the panel centre about 0.2-0.3 m above the box mid-height (about 2.2-2.3 m). Otherwise drop the shade benefit from the thermal argument.",
+   "evidence": "Shadow drop = separation x tan(elevation): 0.15-0.3 m x tan 35-55° gives 0.1-0.4 m. Panel vertical half-extent at 45° tilt is about 0.09 m.",
+   "source": "calc (assumption flagged in the brief)"
+  },
+  {
+   "statement": "Battery: 80 x 42 x 68 pack + 10 mm XPS on all six faces = exactly the 100 x 62 x 88 compartment, cells vertical",
+   "verdict": "corrected",
+   "fix": "The geometry works only with cells vertical (68 + 20 = 88). But there is zero slack and XPS is rigid. Add about 1 mm per axis (compartment 101 x 89 x 63, or foam 9.5 mm), or use compressible closed-cell PE foam, so that print shrinkage and a pack of 'about' this size still fit.",
+   "evidence": "80 + 20 = 100, 68 + 20 = 88, 42 + 20 = 62: zero clearance. Compartment size per ARCHITECTURE.md D13 ('about 100 x 62 x 88').",
+   "source": "hardware/station-pcb/docs/ARCHITECTURE.md lines 932, 990-993; calc"
+  },
+  {
+   "statement": "PMS lead runs from the box through an M12 ST-M floor gland (118, 15) to a JST lead at the hood",
+   "verdict": "corrected",
+   "fix": "A gland that clamps 3.5-7 mm seals only on a round jacketed cable. Run a round jacketed 4-core cable (OD 3.5-7 mm, e.g. about 4.5 mm LiYY 4 x 0.14) between the hood adapter board and the box, with the JST at each end inside. Never pass the PMS7003 ribbon or loose JST wires through the gland. The same applies to the anemometer cable if it is a flat RJ11 type (give it its own grommet).",
+   "evidence": "Lapp ST-M M12 clamping range 3.5-7 mm, for round cable.",
+   "source": "Lapp ST-M catalogue page"
+  },
+  {
+   "statement": "White ASA + roof + 10 mm foam keep the pack's summer peak at 41 °C or less (0 h/yr above 41.5 °C) under a hardware hot trip of about +41.5 to +42.6 °C",
+   "verdict": "unsupported",
+   "fix": "",
+   "evidence": "Trip values confirmed in the repo: nominal off above +42.64 °C; energy corner +41.52 °C; tolerance range +41.52 to +43.76 °C. The peak-temperature claim rests on the model assuming white ASA absorptance equals white paint, and the model did not include the actual layout (see the panel-shadow finding). Not verified.",
+   "source": "hardware/station-pcb/docs/ARCHITECTURE.md lines 188, 362-363, 670, 813"
+  },
+  {
+   "statement": "PMS7003 envelope 48 x 37 x 12, pocket 48.6 x 37.6 x 12.6; port face parametric",
+   "verdict": "confirmed",
+   "fix": "",
+   "evidence": "Distributors list 48 x 37 x 12 mm (Soldered: 47.8 x 36.8 x 12). The Plantower manual says the inlet and outlet are on one face with a baffle needed between them; no source gives exact port positions, so the parametric port face is right.",
+   "source": "elecena.pl; soldered.com; usermanual.wiki PMS7003 manual V2.5"
+  },
+  {
+   "statement": "Box bracket: 4 x M4 x 35 A2 through-bolts with DIN 9021 washers both sides and nylon-insert nuts (tab 11 + spacer 10 + plate 6)",
+   "verdict": "corrected",
+   "fix": "Use M4 x 40. Stack: tab 11 + spacer boss 10 + bracket plate 6 + 2 x 0.8 washers + DIN 985 nut 5 = 33.6 mm, which leaves about 1.4 mm (2 threads) past the nut with M4 x 35. That is borderline for a nylon-insert nut.",
+   "evidence": "Calc using nominal DIN 9021 M4 washer thickness (0.8) and DIN 985 M4 nut height (5.0), from standard tables, not looked up.",
+   "source": "calc"
+  }
+ ]
+}

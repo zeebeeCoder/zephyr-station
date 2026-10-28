@@ -2,7 +2,13 @@
 
 Updated 27.10.2026. Maintained by the coordinator, the Codync "PCB" bot, now on Pi. Reason Network was removed on 27.10.2026, and the team talks over the local pi-intercom broker; its address book is `~/.local/share/codync-intercom/teams/zephyr-pcb.md`. On Reason the bot was `mobric/workspace-codex-21` (a Codex agent) from its restart on 26.10.2026, `mobric/workspace-claude` before that from 26.10.2026, and before that `mobric/pcb-lead` in Grok Bot, called `mobric/pcb-head` until 25.10.2026. Created in F0 by `mobric/pcb-opus-5-5`.
 
-## Phase
+## Migration update — 28.10.2026
+
+The final seventh review is [reviews/F1-pi-r7.md](reviews/F1-pi-r7.md): **F1 NOT READY**, 2 major, 1 minor, 2 notes; R6-M2 separately remains open. Design, analysis, review and enclosure work are **paused until Mikołaj explicitly resumes them**. The independent [Astra report](reviews/zephyr-astra-analysis-20261027.md) is exploratory, not an approved design change. The historical status below predates those results.
+
+Migration documentation, commit and branch publication were approved on 28.10.2026; this does not authorize engineering work or future pushes. See [HANDOFF.md](HANDOFF.md) for restore instructions, current blockers and the private archive of sources outside Git.
+
+## Phase (historical: revision 6, before review 7)
 
 **F1 (requirements and architecture): revision 6 done 27.10.2026, waiting for the independent review. R6-M2 is open and waits for mobric's choice (below).**
 - The documents are [REQUIREMENTS.md](REQUIREMENTS.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
